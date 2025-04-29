@@ -1,10 +1,10 @@
 """Data formats for the Glitch module."""
 
 import jax.numpy as jnp
-from jax.scipy.linalg import block_diag
 from dataclasses import dataclass
 from jax.tree_util import register_pytree_node_class
 
+from glitch.common import JAX_DEBUG_JIT
 
 @dataclass
 @register_pytree_node_class
@@ -201,11 +201,12 @@ class FleetState:
         """
         n_robots, n_states = self.v.shape
 
-        assert u.ndim == 2, "u must be a 2D array."
-        assert (u.shape[0] % (n_robots * n_states)) == 0, (
-            "u must contain an input for each robot and state."
-        )
-        assert u.shape[1] == 1, "u must be a flatten input."
+        if JAX_DEBUG_JIT:
+            assert u.ndim == 2, "u must be a 2D array."
+            assert (u.shape[0] % (n_robots * n_states)) == 0, (
+                "u must contain an input for each robot and state."
+            )
+            assert u.shape[1] == 1, "u must be a flatten input."
 
         n_horizon = u.shape[0] // (n_robots * n_states)
 
