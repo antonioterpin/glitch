@@ -53,6 +53,16 @@ class TransitionsDataset():
                 k, final_positions_box, n_robots, zero_velocity=True
             )
         )
+
+    def __len__(self):
+        """Return the length of the dataset.
+
+        Returns:
+            int: Length of the dataset.
+        """
+        if self.keys is None:
+            return 2**31 - 1
+        return len(self.keys)
     
     def __getitem__(self, idx):
         """Return a sample from the dataset.

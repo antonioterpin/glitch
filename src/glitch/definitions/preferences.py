@@ -2,8 +2,8 @@
 
 import jax.numpy as jnp
 
-from glitch.dynamics import FleetStateInput
-from glitch.common import JAX_DEBUG_JIT
+from glitch.definitions.dynamics import FleetStateInput
+from glitch.utils import JAX_DEBUG_JIT
 
 def input_effort(
     fsu: FleetStateInput,
@@ -39,7 +39,9 @@ def collision_penalty_log(
     Returns:
         Collision penalty.
     """
-    pass
+    raise NotImplementedError(
+        "Collision penalty log is not implemented. "
+    )
 
 def collision_penalty_bump(
     fsu: FleetStateInput,
@@ -54,7 +56,9 @@ def collision_penalty_bump(
     Returns:
         Collision penalty.
     """
-    pass
+    raise NotImplementedError(
+        "Collision penalty bump is not implemented. "
+    )
 
 def _all_pairs_distances(
     fs: FleetStateInput,
@@ -67,4 +71,6 @@ def _all_pairs_distances(
     Returns:
         Pairwise distances.
     """
-    pass
+    raise NotImplementedError(
+        "Pairwise distances is not implemented. "
+    )

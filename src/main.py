@@ -1,32 +1,308 @@
 import argparse
-import yaml
+import datetime
+import os
+import time
 
-def load_configuration(config_path):
-    """Load the configuration file."""
-    with open(config_path, "r") as file:
-        config = yaml.safe_load(file)
-    return config
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
+from tqdm import tqdm
+import optax
+from flax.training import train_state
+from hcnn.project import Project
+
+from glitch.definitions.constraints import get_constraints
+from glitch.nn import HardConstrainedMLP, load_model, save_model
+from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
+from glitch.utils import load_configuration, GracefulShutdown, Logger
+from glitch.definitions.dynamics import b_from_initial_final_states as b_from_states
+import glitch.definitions.preferences as preferences
+
+def build_batched_objective(config_hcnn):
+    collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
+    try:
+        collision_penalty_fn = getattr(preferences, collision_penalty_fn_name)
+    except AttributeError:
+        raise ValueError(f"Unknown collision penalty '{collision_penalty_fn_name}'")
+    
+    def batched_objective(predictions):
+        return (
+            preferences.input_effort(predictions, config_hcnn["compensation"]) 
+            + collision_penalty_fn(predictions, config_hcnn["collision_penalty_value"])
+        )
+    return jax.jit(batched_objective)
+
+def build_steps(project, config_hcnn):
+    """Build the training and evaluation step functions."""
+    batched_objective = build_batched_objective(config_hcnn)
+    sigma, omega, n_iter, n_iter_bwd = (
+        config_hcnn["sigma"],
+        config_hcnn["omega"],
+        config_hcnn["n_iter"],
+        config_hcnn["n_iter_bwd"],
+    )
+    def train_step(state, initial_states, final_states):
+        """Run a single training step."""
+        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
+        b_batch = b_from_states(initial_states, final_states)
+
+        def loss_fn(params):
+            predictions = state.apply_fn(
+                {"params": params}, 
+                x=x_batch, 
+                b=b_batch, 
+                sigma=sigma,
+                omega=omega,
+                n_iter=n_iter, 
+                n_iter_bwd=n_iter_bwd,
+            )
+            return batched_objective(predictions).mean()
+
+        loss, grads = jax.value_and_grad(loss_fn)(state.params)
+        return loss, state.apply_gradients(grads=grads)
+
+    def eval_step(state, initial_states, final_states):
+        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
+        b_batch = b_from_states(initial_states, final_states)
+
+        predictions = state.apply_fn(
+            {"params": state.params}, 
+            x=x_batch, 
+            b=b_batch, 
+            sigma=sigma,
+            omega=omega,
+            n_iter=n_iter, 
+            n_iter_bwd=n_iter_bwd,
+        )
+
+        accuracy = batched_objective(predictions).mean()
+        # During training, we report the average constraint violation
+        cv = project.cv(predictions).mean()
+
+        return accuracy, cv
+    return jax.jit(train_step), jax.jit(eval_step)
+
+def load_hcnn(project, config):
+    """Load the HCNN model based on the configuration.
+    
+    Args:
+        config (dict): Configuration dictionary containing HCNN parameters.
+    """
+    try:
+        activation = getattr(nn, config["activation"])
+    except AttributeError:
+        raise ValueError(f"Unknown activation '{config["activation"]}'")
+
+    return HardConstrainedMLP(
+        project=project,
+        features_list=config["features"],
+        fpi=config["fpi"],
+        activation=activation,
+    )
 
 def argument_parser():
     parser = argparse.ArgumentParser(description="A simple argument parser.")
     parser.add_argument(
-        "--config",
+        "--config-dataset",
         type=str,
-        default="configs.yaml",
-        help="Path to the configuration file.",
+        default="configs/dataset.yaml",
+        help="Path to the dataset configuration file.",
+    )
+
+    parser.add_argument(
+        "--config-hcnn",
+        type=str,
+        default="configs/hcnn.yaml",
+        help="Path to the hcnn configuration file.",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="out/results/{timestamp}",
+        help="Directory to save the results.",
+    )
+
+    parser.add_argument(
+        "--load-from",
+        type=str,
+        default=None,
+        help="Path to the trained model to load.",
+    )
+
+    parser.add_argument(
+        "--plot-training-curves",
+        action="store_true",
+        help="Plot training curves.",
+    )
+
+    parser.add_argument(
+        "--save-results",
+        action="store_true",
+        help="Save the results.",
+    )
+
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Train the model.",
+    )
+
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=1,
+        help="Save the model every save_every training batches.",
+    )
+
+    parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=1,
+        help="Evaluate the model every eval_every training batches.",
     )
 
     args = parser.parse_args(args)
 
     return args
 
+def train_hcnn(
+    projection_layer: Project,
+    state: train_state.TrainState,
+    dataset_training: TransitionsDataset,
+    dataset_validation: TransitionsDataset,
+    save_every: int,
+    eval_every: int,
+    output_dir: str,
+    hcnn_config: dict,
+):
+    """Train the HCNN model."""
+    eval_initial_states, eval_final_states = dataset_validation[0]
+    train_step, eval_step = build_steps(
+        project=projection_layer,
+        hcnn_config=hcnn_config
+    )
+    model_name = hcnn_config["model_name"]
+    with (
+        GracefulShutdown("Stop detected, finishing epoch...") as g,
+        Logger(f"training-{model_name}") as data_logger,
+    ):
+        for step in (pbar := tqdm(range(len(dataset_training)))):
+            if g.stop_requested:
+                break
+            initial_states, final_states = dataset_training[step]
+            t = time.time()
+            loss, state = train_step(
+                state, 
+                initial_states,
+                final_states,
+            )
+            t = time.time() - t
+            pbar.set_description(f"Train Loss: {loss.mean():.5f}")
+            data_logger.log(step, {
+                "loss": loss,
+                "batch_training_time": t,
+            })
+
+            if step % eval_every == 0:
+                obj, cv = eval_step(
+                    state, 
+                    eval_initial_states, 
+                    eval_final_states
+                )
+                data_logger.log(step, {
+                    "eval_objective": obj,
+                    "eval_constraint_violation": cv,
+                })
+
+            if step % save_every == 0:
+                save_model(
+                    state.params,
+                    output_dir,
+                    f"{model_name}_{step}",
+                )
+
+
 if __name__ == "__main__":
     args = argument_parser()
 
-    # Load the configuration file
-    config = load_configuration(args.config)
+    # Load the dataset
+    config_dataset = load_configuration(args.config_dataset)
+    if config_dataset is None:
+        raise ValueError(f"Configuration file not found or empty: {args.config_hcnn}.")
+    (
+        dataset_training,
+        dataset_validation,
+        dataset_test,
+    ) = load_dataset(config_dataset)
+    
+    # Load the HCNN configuration
+    config_hcnn = load_configuration(args.config_hcnn)
+    if config_hcnn is None:
+        raise ValueError(f"Configuration file not found or empty: {args.config_hcnn}.")
+    
+    # Prepare the constraints
+    project = get_constraints(
+        horizon=config_dataset["problem"]["horizon"],
+        n_robots=1, # TODO: Allow the option of coupling the projection
+        n_states=config_dataset["problem"]["n_states"],
+        config_constraints=config_hcnn
+    )
+    hcnn = load_hcnn(project, config_hcnn)
 
-    if config is None:
-        raise ValueError("Configuration file not found or empty.")
+    # Possibly load a pre-trained model
+    trainable_state = None
+    if args.load_from is not None:
+        trainable_state = load_model(args.load_from)
+
+    if trainable_state is not None:
+        print(f"Loaded parameters from {args.load_from}")
+    else:
+        print("No parameters loaded. Initializing the network parameters from scratch.")
+        # Initialize the parameters
+        initial_states, final_states = dataset_training[0]
+        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
+        b_batch = b_from_states(initial_states, final_states)
+        trainable_state = hcnn.init(
+            jax.random.PRNGKey(config_hcnn["seed"]),
+            x=x_batch,
+            b=b_batch,
+            sigma=config_hcnn["sigma"],
+            omega=config_hcnn["omega"],
+            n_iter=2,
+        )
+
     
+    # In any case, we re-initialize the train state
+    state = train_state.TrainState.create(
+        apply_fn=hcnn.apply,
+        params=trainable_state["params"],
+        tx=optax.adam(config_hcnn["learning_rate"]),
+    )
     
+    if args.save_results:
+        # Create the output directory if it doesn't exist
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = args.output_dir.format(timestamp=timestamp)
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Results will be saved in: {output_dir}")
+
+    if args.train > 0:
+        training_time_start = time.time()
+        train_hcnn(
+            projection_layer=hcnn.project,
+            state=state,
+            dataset_training=dataset_training,
+            dataset_validation=dataset_validation,
+            save_every=args.save_every,
+            eval_every=args.eval_every,
+            output_dir=output_dir,
+            config_hcnn=config_hcnn,
+        )
+        training_time = time.time() - training_time_start
+        print(f"Training time: {training_time:.5f} seconds")
+
+    # Evaluate the (trained) model on the test set
+    raise NotImplementedError(
+        "Evaluation is not implemented yet."
+    )

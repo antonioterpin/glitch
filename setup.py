@@ -13,7 +13,7 @@ setup(
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     install_requires=[
-        "jax==0.5.3",
+        "jax>=0.4.27",
         "tqdm>=4.67.1",
         "ruamel.yaml>=0.18.10",
         "imageio>=2.37.0",
@@ -22,7 +22,8 @@ setup(
         "flax>=0.10.2",
         "torch>=2.7.0",
         "colorama>=0.4.6",
-        "hcnn @ git+ssh://git@github.com/antonioterpin/hcnn.git@dev"
+        "wandb",
+        "hcnn @ git+ssh://git@github.com/antonioterpin/hcnn.git@feat-autotuning"
     ],
     extras_require={
         "dev": [

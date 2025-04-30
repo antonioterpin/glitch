@@ -8,10 +8,13 @@ from hcnn.constraints.box import BoxConstraint
 from hcnn.constraints.affine_inequality import AffineInequalityConstraint
 from hcnn.constraints.affine_equality import EqualityConstraint
 
-from glitch.dynamics import (
+from glitch.definitions.dynamics import (
     get_position_mask,
     get_velocity_mask,
     get_input_mask,
+    get_jerk_matrix,
+    get_dynamics,
+    get_initial_final_constraints
 )
 
 def get_working_space_constraints(
@@ -121,6 +124,7 @@ def get_jerk_constraints(
     horizon: int,
     n_states: int,
     n_robots: int,
+    h: float,
     config: dict,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Compute the jerk constraints.
@@ -129,20 +133,26 @@ def get_jerk_constraints(
         horizon: Time horizon.
         n_states: Number of states.
         n_robots: Number of robots.
+        h: Time discretization.
         config: Configuration dictionary.
 
     Returns:
         Jerk constraints.
     """
     # Affine inequality constraints.
-    # TODO
+    C = get_jerk_matrix(horizon, n_states, n_robots, h)
+    # TODO: get from config
+    lb = -1 * jnp.ones((C.shape[0], 1))
+    ub = 1 * jnp.ones((C.shape[0], 1))
+    return C, lb, ub
 
 
 def get_constraints(
     horizon: int,
     n_states: int,
     n_robots: int,
-    config: dict,
+    h: float,
+    config_constraints: dict = None,
 ) -> Project:
     """Compute the constraints.
 
@@ -150,7 +160,8 @@ def get_constraints(
         horizon: Time horizon.
         n_states: Number of states.
         n_robots: Number of robots.
-        config: Configuration dictionary.
+        h: Time discretization.
+        config_constraints: Configuration dictionary.
 
     Returns:
         Constraints.
@@ -162,13 +173,13 @@ def get_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config,
+        config=config_constraints,
     )
     _lb, _ub = get_velocity_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config,
+        config=config_constraints,
     )
     lb = jnp.maximum(lb,_lb,)
     ub = jnp.minimum(ub,_ub,)
@@ -176,7 +187,7 @@ def get_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config,
+        config=config_constraints,
     )
     lb = jnp.maximum(lb,_lb)
     ub = jnp.minimum(ub,_ub)
@@ -195,7 +206,8 @@ def get_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config,
+        h=h,
+        config=config_constraints,
     )
 
     ineq = AffineInequalityConstraint(
@@ -205,23 +217,47 @@ def get_constraints(
     )
 
     # ---- Affine equality constraints ----
-    # TODO: add initial state constraints
-    # TODO: add final state constraints
-    # TODO: add dynamics constraints
+    A, B = get_dynamics(
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=1, # We can decouple the constraints among the robots
+        h=h,
+    )
+    A_eq_dynamics = jnp.concatenate((
+        jnp.zeros((B.shape[0], B.shape[0] - (B.shape[1] + A.shape[1]))),
+        A, 
+        B
+    ), axis=1) - jnp.eye(B.shape[0])
+    A_eq = jnp.concatenate((
+        get_initial_final_constraints(
+            horizon=horizon,
+            n_states=n_states,
+            n_robots=1, # We can decouple the constraints among the robots
+        ),
+        A_eq_dynamics,
+    ), axis=0)
     eq = EqualityConstraint(
-        A = A,
-        b = b,
+        A = A_eq,
+        b = jnp.zeros((A.shape[0], 1)), # b is considered variable anyway
+        method=None,
         var_b=True # We may need to solve for different initial and terminal states
     )
 
-
     # ---- Project ----
-    # TODO: autotuning or get from config
-    # TODO: perform matrix equilibration if specified in config
+    if (
+        config_constraints["autotuning"]
+        or config_constraints["equilibration"]
+    ):
+        # TODO: autotuning
+        # TODO: perform matrix equilibration if specified in config
+        raise NotImplementedError(
+            "Autotuning and equilibration are not implemented yet."
+        )
     project = Project(
         box_constraint=box,
         affine_inequality_constraint=ineq,
         affine_equality_constraint=eq,
+        unroll=config_constraints["unroll"],
     )
 
     return project

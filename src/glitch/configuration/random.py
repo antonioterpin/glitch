@@ -1,8 +1,8 @@
 """Module for generating random configurations."""
 
 import jax
-from glitch.common import JAX_DEBUG_JIT
-from glitch.dynamics import FleetStateInput
+from glitch.utils import JAX_DEBUG_JIT
+from glitch.definitions.dynamics import FleetStateInput
 
 def sample_from_box(
     key: jax.random.PRNGKey,

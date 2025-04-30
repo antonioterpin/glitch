@@ -2,13 +2,14 @@ import pytest
 import jax
 import jax.numpy as jnp
 from jax import tree_util
-from glitch.dynamics import (
+from glitch.definitions.dynamics import (
     FleetStateInput,
     get_dynamics,
     get_position_mask,
     get_velocity_mask,
     get_input_mask,
 )
+from glitch.utils import JAX_DEBUG_JIT
 
 jax.config.update("jax_enable_x64", True)
 
@@ -39,17 +40,20 @@ def test_valid_construction(example_fsu):
     assert jnp.array_equal(example_fsu.u, jnp.zeros((0, 2, 2)))
 
 
+@pytest.mark.skipif(
+    not JAX_DEBUG_JIT, reason="Skipping test due to JAX_DEBUG_JIT being disabled.")
 def test_dimension_mismatch():
     """v and p must have the same number of dimensions (ndim)."""
-    v = jnp.array([[[1.0, 2.0]]])       # ndim = 2
-    p = jnp.array([[0.0, 1.0, 2.0]])    # ndim = 1
+    v = jnp.array([[[1.0, 2.0]]])       # ndim = 3
+    p = jnp.array([[0.0, 1.0, 2.0]])    # ndim = 2
     u = jnp.zeros((0, 2, 2))  # shape (0, 2, 2)
     with pytest.raises(ValueError, match="same number of dimensions"):
         FleetStateInput(v, p, u)
 
 # TODO: add more tests for constructor
 
-
+@pytest.mark.skipif(
+    not JAX_DEBUG_JIT, reason="Skipping test due to JAX_DEBUG_JIT being disabled.")
 def test_robot_count_mismatch():
     """v and p must refer to the same number of robots (same first dimension)."""
     v = jnp.ones((1, 3, 2))  # 3 robots
@@ -613,3 +617,11 @@ def test_input_mask(n_robots, n_dim, horizon, seed):
         f"Position mask did not affect the input part. "
         f"Expected:\n{jnp.zeros_like(fsu.u)}, got:\n{fsu.u}"
     )
+
+
+def test_jerk_matrix():
+    assert False, "TODO: implement jerk matrix test"
+
+def test_assemble_dynamics_constraint():
+    # TODO: check that ([0, A, B] - I)fsu.flatten() = 0 is indeed correct
+    assert False, "TODO: implement assemble_dynamics_constraint test"

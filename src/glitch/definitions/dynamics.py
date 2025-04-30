@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 from jax.tree_util import register_pytree_node_class
 
-from glitch.common import JAX_DEBUG_JIT
+from glitch.utils import JAX_DEBUG_JIT
 
 @dataclass
 @register_pytree_node_class
@@ -228,3 +228,60 @@ def get_dynamics(
     ], axis=0)
     
     return A_horizon, B_horizon
+
+def get_initial_final_constraints(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+) -> jnp.ndarray:
+    """Get the A matrix for initial and final constraints of the fleet.
+    
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Initial and final constraints of the fleet.
+    """
+    raise NotImplementedError("get_initial_final_constraints not implemented.")
+
+def b_from_initial_final_states(
+    initial_states: jnp.ndarray,
+    final_states: jnp.ndarray,
+) -> jnp.ndarray:
+    """Get the b vector from the initial and final states.
+    
+    Args:
+        initial_states: Initial states of the fleet.
+        final_states: Final states of the fleet.
+    
+    Returns:
+        b vector of the fleet.
+    """
+    raise NotImplementedError("b_from_states not implemented.")
+
+def get_jerk_matrix(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+    h: float,
+) -> jnp.ndarray:
+    """Get the jerk matrix of the fleet.
+    
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+        h: Time discretization.
+
+    Returns:
+        Jerk matrix of the fleet.
+    """
+    n_inputs = n_states * n_robots * (horizon - 1)
+    J = 1 / h * (
+        jnp.eye((n_inputs - 1, n_inputs), k = 1) 
+        - jnp.eye((n_inputs - 1, n_inputs), k = 0)
+    )
+    return jnp.concatenate((
+        jnp.zeros((J.shape[0], horizon * n_robots * n_states * 2)), J), axis=1)
