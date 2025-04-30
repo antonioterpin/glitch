@@ -1,0 +1,10 @@
+problem:
+  n_robots: 10
+  n_states: 3
+  horizon: 10
+
+dataset:
+  batch_size: 32
+  size: 2048 # -1 to generate indefinitely for training
+  val_size: 512
+  test_size: 512

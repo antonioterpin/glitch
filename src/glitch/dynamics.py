@@ -8,104 +8,80 @@ from glitch.common import JAX_DEBUG_JIT
 
 @dataclass
 @register_pytree_node_class
-class FleetState:
+class FleetStateInput:
     """Fleet state data format.
     
     We follow the notation of 
     https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=6385823.
     """
-
     # Robots state
-    v: jnp.ndarray # Robots velocity, shape (n_robots, n_states)
-    p: jnp.ndarray # Robots position, shape (n_robots, n_states)
+    v: jnp.ndarray # Robots velocity, shape (horizon, n_robots, n_states)
+    p: jnp.ndarray # Robots position, shape (horizon, n_robots, n_states)
+    # Robots input
+    u: jnp.ndarray # Robots input, shape (horizon - 1, n_robots, n_states)
 
-    def __init__(self, v: jnp.ndarray, p: jnp.ndarray):
+    def __init__(self, v: jnp.ndarray, p: jnp.ndarray, u: jnp.ndarray):
         """Initialize the robot state.
         
         Args:
             v: Robots velocities.
             p: Robots positions.
+            u: Robots inputs.
         """
-        if v.ndim != p.ndim:
-            raise ValueError("v and p must have the same number of dimensions.")
-        if v.ndim != 2:
-            raise ValueError("v and p must be 2D arrays.")
-        if v.shape[0] != p.shape[0]:
-            raise ValueError("v and p must have the same number of robots.")
-        if v.shape[1] != p.shape[1]:
-            raise ValueError("v and p must have the same number of states.")
+        if JAX_DEBUG_JIT:
+            if v.ndim != p.ndim:
+                raise ValueError("v and p must have the same number of dimensions.")
+            if v.ndim != 3:
+                raise ValueError("v and p must be (horizon, n_robots, n_states).")
+            if v.shape[0] != p.shape[0]:
+                raise ValueError("v and p must have the same horizon length.")
+            if v.shape[1] != p.shape[1]:
+                raise ValueError("v and p must have the same number of robots.")
+            if v.shape[2] != p.shape[2]:
+                raise ValueError("v and p must have the same number of states.")
+            if u.ndim != 3:
+                raise ValueError("u must be a (horizon - 1, n_robots, n_states) array.")
+            if u.shape[0] != v.shape[0] - 1:
+                raise ValueError("u must have one less horizon length than v and p.")
+            if u.shape[1] != v.shape[1]:
+                raise ValueError("u must have the same number of robots as v and p.")
+            if u.shape[2] != v.shape[2]:
+                raise ValueError("u must have the same number of states as v and p.")
         self.v = v
         self.p = p
+        self.u = u
 
     def tree_flatten(self):
         """Flatten the FleetState object."""
-        return (self.v, self.p), None
+        return (self.v, self.p, self.u), None
     
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         """Unflatten the FleetState object."""
-        v, p = children
-        return cls(v, p)
+        v, p, u = children
+        return cls(v, p, u)
     
-    def get_dynamics(self, h: float):
-        """Get the dynamics of the fleet.
-        
-        Args:
-            h: Time discretization.
-        """
-        n_robots, n_states = self.v.shape
-
-        A = jnp.concatenate((
-            jnp.concatenate((
-                jnp.eye(n_states * n_robots),
-                h * jnp.eye(n_states * n_robots),
-            ), axis=1),
-            jnp.concatenate((
-                jnp.zeros((n_states * n_robots, n_states * n_robots)),
-                jnp.eye(n_states * n_robots),
-            ), axis=1)
-        ), axis=0)
-        B = jnp.concatenate((
-            h ** 2 / 2 * jnp.eye(n_states * n_robots),
-            h * jnp.eye(n_states * n_robots),
-        ), axis=0)
-
-        return A, B
-    
-    def get_flatten_state(self):
+    def flatten(self):
         """Get the flattened state of the fleet: [p1; p2; ...; v1; v2; ...].
         
         Returns:
             Flattened state of the fleet.
         """
         return jnp.concatenate((
-            self.p.flatten(order="C"), # row-major
-            self.v.flatten(order="C")  # row-major
+            self.p.flatten(order="C"),
+            self.v.flatten(order="C"),
+            self.u.flatten(order='C')
         ), axis=0)[..., None]
     
     def replace(self, **kwargs):
         """Return a new state with specified fields replaced."""
-        return FleetState(
+        return FleetStateInput(
             v=kwargs.get('v', self.v),
-            p=kwargs.get('p', self.p)
+            p=kwargs.get('p', self.p),
+            u=kwargs.get('u', self.u)
         )
     
-    def unpack_flatten(self, x: jnp.ndarray):
-        """Get the fleet state from the flattened state.
-        
-        Args:
-            x: Flattened state of the fleet.
-        """
-        n_robots, n_states = self.v.shape
-        x = self.get_unflatten_horizon(x)[0, ...]
-        return self.replace(
-            p=jnp.concatenate(x[:, 0, ...], axis=0).reshape(
-                (n_robots, n_states), order='C'),
-            v=jnp.concatenate(x[:, 1, ...], axis=0).reshape(
-                (n_robots, n_states), order='C'),
-        )
-    
-    def get_unflatten_horizon(self, x: jnp.ndarray):
+    def unpack(self, x: jnp.ndarray):
         """Get the fleet state from the flattened state over a horizon.
         
         Args:
@@ -114,102 +90,141 @@ class FleetState:
         Returns:
             Unflattened state of the fleet of size (horizon, n_robots, 2, n_states).
         """
-        n_robots, n_states = self.v.shape
-        horizon = x.shape[0] // (n_robots * n_states * 2)
-        return jnp.array([
-            [
-                [
-                    # position
-                    x[
-                        t * n_robots * n_states * 2 \
-                            + i * n_states
-                        :
-                        t * n_robots * n_states * 2 \
-                            + (i + 1) * n_states
-                    ],
-                    # velocity
-                    x[
-                        t * n_robots * n_states * 2 + \
-                            + n_robots * n_states \
-                            + i * n_states
-                        :
-                        t * n_robots * n_states * 2 + \
-                            + n_robots * n_states \
-                            + (i + 1) * n_states
-                    ]
-                ]
-                for i in range(n_robots)
-            ]
-            for t in range(horizon)
-        ])
+        horizon, n_robots, n_states = self.p.shape
+
+        p_flatten = x[:n_robots * n_states * horizon]
+        v_flatten = x[n_robots * n_states * horizon:n_robots * n_states * 2 * horizon]
+        u_flatten = x[n_robots * n_states * 2 * horizon:]
+
+        return FleetStateInput(
+            v=v_flatten.reshape((horizon, n_robots, n_states), order='C'),
+            p=p_flatten.reshape((horizon, n_robots, n_states), order='C'),
+            u=u_flatten.reshape((horizon - 1, n_robots, n_states), order='C')
+        )
     
-    def get_dynamics_over_horizon(self, h: float, N: int):
-        """Get the dynamics of the fleet over a horizon.
-        
-        Args:
-            h: Time discretization.
-            N: Number of time steps.
-        """
-        assert N > 0, "N must be greater than 0."
-        A, B = self.get_dynamics(h)
-
-        A_horizon = jnp.block([[
-            jnp.linalg.matrix_power(A, i + 1)
-        ] for i in range(N)])
-        B_horizon = jnp.concatenate([
-            jnp.concatenate([
-                jnp.linalg.matrix_power(A, i - k) @ B if k <= i else jnp.zeros_like(B)
-                for k in range(N)
-            ], axis=1)
-            for i in range(N)
-        ], axis=0)
-        
-        return A_horizon, B_horizon
+    @property
+    def n_robots(self):
+        """Number of robots in the fleet."""
+        return self.p.shape[1]
+    @property
+    def n_states(self):
+        """Number of states in the fleet."""
+        return self.p.shape[2]
     
-    def get_flatten_input(self, u: jnp.ndarray):
-        """Get the flattened input of the fleet: [u1; u2; ...].
-        
-        Args:
-            u: Input of the fleet.
-        """
-        assert u.ndim == 2, "u must be a 2D array."
-        assert u.shape[0] == self.v.shape[0], "u must have the same number of robots."
-        assert u.shape[1] == self.v.shape[1], "u must have the same number of states."
+    @property
+    def horizon(self):
+        """Horizon of the fleet."""
+        return self.p.shape[0]
+    
+def get_position_mask(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+):
+    """Get the position mask of the fleet.
 
-        return self.get_flatten_input_horizon(u[None, ...])
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Position mask of the fleet.
+    """
+    return jnp.concatenate((
+        # mask one position
+        jnp.ones((horizon * n_robots * n_states, 1)),
+        # mask zero velocity
+        jnp.zeros((horizon * n_robots * n_states, 1)),
+        # mask zero input
+        jnp.zeros(((horizon - 1) * n_robots * n_states, 1))
+    ), axis=0)
 
-    def get_flatten_input_horizon(self, u: jnp.ndarray):
-        """Get the flattened input of the fleet over a horizon.
-        
-        Args:
-            u: Input of the fleet.
-        """
-        assert u.ndim == 3, "u must be a 2D array."
-        assert u.shape[1] == self.v.shape[0], "u must have the same number of robots."
-        assert u.shape[2] == self.v.shape[1], "u must have the same number of states."
+def get_velocity_mask(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+):
+    """Get the position mask of the fleet.
 
-        horizon, n_robots, n_states = u.shape
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Position mask of the fleet.
+    """
+    return jnp.concatenate((
+        # mask zero position
+        jnp.zeros((horizon * n_robots * n_states, 1)),
+        # mask one velocity
+        jnp.ones((horizon * n_robots * n_states, 1)),
+        # mask zero input
+        jnp.zeros(((horizon - 1) * n_robots * n_states, 1))
+    ), axis=0)
+    
+def get_input_mask(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+):
+    """Get the input mask of the fleet.
 
-        # Flatten the input (row-major)
-        return u.reshape((horizon * n_robots * n_states, 1), order='C')
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Input mask of the fleet.
+    """
+    return jnp.concatenate((
+        # mask zero for states
+        jnp.zeros((horizon * n_robots * n_states * 2, 1)),
+        # mask one input
+        jnp.ones(((horizon - 1) * n_robots * n_states, 1)),
+    ), axis=0)
+    
 
-    def get_unflatten_input(self, u: jnp.ndarray):
-        """Get the unflattened input of the fleet.
-        
-        Args:
-            u: Input of the fleet.
-        """
-        n_robots, n_states = self.v.shape
+def get_dynamics(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+    h: float):
+    """Get the dynamics of the fleet.
+    
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+        h: Time discretization.
+    """
 
-        if JAX_DEBUG_JIT:
-            assert u.ndim == 2, "u must be a 2D array."
-            assert (u.shape[0] % (n_robots * n_states)) == 0, (
-                "u must contain an input for each robot and state."
-            )
-            assert u.shape[1] == 1, "u must be a flatten input."
+    A = jnp.concatenate((
+        jnp.concatenate((
+            jnp.eye(n_states * n_robots),
+            h * jnp.eye(n_states * n_robots),
+        ), axis=1),
+        jnp.concatenate((
+            jnp.zeros((n_states * n_robots, n_states * n_robots)),
+            jnp.eye(n_states * n_robots),
+        ), axis=1)
+    ), axis=0)
+    B = jnp.concatenate((
+        h ** 2 / 2 * jnp.eye(n_states * n_robots),
+        h * jnp.eye(n_states * n_robots),
+    ), axis=0)
 
-        n_horizon = u.shape[0] // (n_robots * n_states)
-
-        return u.reshape((n_horizon, n_robots, n_states), order='C')
-        
-
+    A_horizon = jnp.block([[
+        jnp.linalg.matrix_power(A, i + 1)
+    ] for i in range(horizon)])
+    B_horizon = jnp.concatenate([
+        jnp.concatenate([
+            jnp.linalg.matrix_power(A, i - k) @ B if k <= i else jnp.zeros_like(B)
+            for k in range(horizon)
+        ], axis=1)
+        for i in range(horizon)
+    ], axis=0)
+    
+    return A_horizon, B_horizon

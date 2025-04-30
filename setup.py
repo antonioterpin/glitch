@@ -18,7 +18,11 @@ setup(
         "ruamel.yaml>=0.18.10",
         "imageio>=2.37.0",
         "matplotlib>=3.10.1",
-
+        "optax>=0.2.4",
+        "flax>=0.10.2",
+        "torch>=2.7.0",
+        "colorama>=0.4.6",
+        "hcnn @ git+ssh://git@github.com/antonioterpin/hcnn.git@dev"
     ],
     extras_require={
         "dev": [

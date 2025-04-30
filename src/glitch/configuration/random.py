@@ -1,15 +1,15 @@
 """Module for generating random configurations."""
 
 import jax
-from glitch.dynamics import FleetState
 from glitch.common import JAX_DEBUG_JIT
+from glitch.dynamics import FleetStateInput
 
 def sample_from_box(
     key: jax.random.PRNGKey,
     box: jax.numpy.ndarray,
     n_robots: int,
     zero_velocity: bool = False,
-) -> jax.numpy.ndarray:
+) -> FleetStateInput:
     """Sample from a box in R^n.
 
     Args:
@@ -22,31 +22,34 @@ def sample_from_box(
         Samples from the box.
     """
     if JAX_DEBUG_JIT:
-        assert box.ndim == 2, "Box must be of shape (n, 2)"
+        assert box.ndim == 2, "Box must be of shape (n_states, 2)"
         assert n_robots > 0, "Number of robots must be positive"
-        assert box.shape[1] == 2, "Box contain upper and lower bounds"
+        assert box.shape[1] == 2 or (
+            box.shape[1] == 4 and not zero_velocity
+        ), "Box contain upper and lower bounds"
 
     keyp, keyv = jax.random.split(key)
     if zero_velocity:
-        v = jax.numpy.zeros((n_robots, box.shape[0]))
+        v = jax.numpy.zeros((1, n_robots, box.shape[0]))
     else:
         # Generate random velocities
         v = jax.random.uniform(
             keyv,
-            shape=(n_robots, box.shape[0]),
-            minval=box[:, 0],
-            maxval=box[:, 1],
+            shape=(1, n_robots, box.shape[0]),
+            minval=box[:, 2],
+            maxval=box[:, 3],
         )
 
     # Generate random samples
     p = jax.random.uniform(
         keyp,
-        shape=(n_robots, box.shape[0]),
+        shape=(1, n_robots, box.shape[0]),
         minval=box[:, 0],
         maxval=box[:, 1],
     )
 
-    return FleetState(
+    return FleetStateInput(
         p=p,
         v=v,
+        u=jax.numpy.zeros((0, n_robots, box.shape[0])),
     )
