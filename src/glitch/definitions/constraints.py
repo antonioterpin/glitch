@@ -14,7 +14,8 @@ from glitch.definitions.dynamics import (
     get_input_mask,
     get_jerk_matrix,
     get_dynamics,
-    get_initial_final_constraints
+    get_initial_states_extractor,
+    get_final_states_extractor,
 )
 
 def get_working_space_constraints(
@@ -202,19 +203,21 @@ def get_constraints(
     )
 
     # ---- Affine inequality constraints ----
-    C, lb, ub = get_jerk_constraints(
-        horizon=horizon,
-        n_states=n_states,
-        n_robots=1, # We can decouple the constraints among the robots
-        h=h,
-        config=config_constraints,
-    )
+    ineq = None
+    if horizon > 1:
+        C, lb, ub = get_jerk_constraints(
+            horizon=horizon,
+            n_states=n_states,
+            n_robots=1, # We can decouple the constraints among the robots
+            h=h,
+            config=config_constraints,
+        )
 
-    ineq = AffineInequalityConstraint(
-        C=C,
-        lb=lb,
-        ub=ub,
-    )
+        ineq = AffineInequalityConstraint(
+            C=C,
+            lb=lb,
+            ub=ub,
+        )
 
     # ---- Affine equality constraints ----
     A, B = get_dynamics(
@@ -229,7 +232,12 @@ def get_constraints(
         B
     ), axis=1) - jnp.eye(B.shape[0])
     A_eq = jnp.concatenate((
-        get_initial_final_constraints(
+        get_initial_states_extractor(
+            horizon=horizon,
+            n_states=n_states,
+            n_robots=1, # We can decouple the constraints among the robots
+        ),
+        get_final_states_extractor(
             horizon=horizon,
             n_states=n_states,
             n_robots=1, # We can decouple the constraints among the robots

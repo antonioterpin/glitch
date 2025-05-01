@@ -15,8 +15,10 @@ from glitch.definitions.constraints import get_constraints
 from glitch.nn import HardConstrainedMLP, load_model, save_model
 from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
 from glitch.utils import load_configuration, GracefulShutdown, Logger
-from glitch.definitions.dynamics import b_from_initial_final_states as b_from_states
 import glitch.definitions.preferences as preferences
+
+def b_from_states(initial_states, final_states):
+    return jnp.concatenate((initial_states, final_states), axis=0)
 
 def build_batched_objective(config_hcnn):
     collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
@@ -41,10 +43,14 @@ def build_steps(project, config_hcnn):
         config_hcnn["n_iter"],
         config_hcnn["n_iter_bwd"],
     )
+
     def train_step(state, initial_states, final_states):
         """Run a single training step."""
         x_batch = jnp.concatenate((initial_states, final_states), axis=0)
-        b_batch = b_from_states(initial_states, final_states)
+        b_states = b_from_states(initial_states, final_states)
+        b_zeros = jnp.zeros((
+            project.lifted_eq_constraint.n_constraints - b_states.shape[0], 1))
+        b_batch = jnp.concatenate((b_states, b_zeros), axis=0)
 
         def loss_fn(params):
             predictions = state.apply_fn(

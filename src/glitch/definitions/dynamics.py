@@ -113,8 +113,8 @@ class FleetStateInput:
     
     @property
     def horizon(self):
-        """Horizon of the fleet."""
-        return self.p.shape[0]
+        """Horizon (0 to Horizon) of the fleet."""
+        return self.p.shape[0] - 1
     
 def get_position_mask(
     horizon: int,
@@ -133,11 +133,11 @@ def get_position_mask(
     """
     return jnp.concatenate((
         # mask one position
-        jnp.ones((horizon * n_robots * n_states, 1)),
+        jnp.ones(((horizon + 1) * n_robots * n_states, 1)),
         # mask zero velocity
-        jnp.zeros((horizon * n_robots * n_states, 1)),
+        jnp.zeros(((horizon + 1) * n_robots * n_states, 1)),
         # mask zero input
-        jnp.zeros(((horizon - 1) * n_robots * n_states, 1))
+        jnp.zeros((horizon * n_robots * n_states, 1))
     ), axis=0)
 
 def get_velocity_mask(
@@ -157,11 +157,11 @@ def get_velocity_mask(
     """
     return jnp.concatenate((
         # mask zero position
-        jnp.zeros((horizon * n_robots * n_states, 1)),
+        jnp.zeros(((horizon + 1) * n_robots * n_states, 1)),
         # mask one velocity
-        jnp.ones((horizon * n_robots * n_states, 1)),
+        jnp.ones(((horizon + 1) * n_robots * n_states, 1)),
         # mask zero input
-        jnp.zeros(((horizon - 1) * n_robots * n_states, 1))
+        jnp.zeros((horizon * n_robots * n_states, 1))
     ), axis=0)
     
 def get_input_mask(
@@ -181,9 +181,9 @@ def get_input_mask(
     """
     return jnp.concatenate((
         # mask zero for states
-        jnp.zeros((horizon * n_robots * n_states * 2, 1)),
+        jnp.zeros(((horizon + 1) * n_robots * n_states * 2, 1)),
         # mask one input
-        jnp.ones(((horizon - 1) * n_robots * n_states, 1)),
+        jnp.ones((horizon * n_robots * n_states, 1)),
     ), axis=0)
     
 
@@ -229,7 +229,7 @@ def get_dynamics(
     
     return A_horizon, B_horizon
 
-def get_initial_final_constraints(
+def get_initial_states_extractor(
     horizon: int,
     n_robots: int,
     n_states: int,
@@ -244,22 +244,56 @@ def get_initial_final_constraints(
     Returns:
         Initial and final constraints of the fleet.
     """
-    raise NotImplementedError("get_initial_final_constraints not implemented.")
+    initial_p = jnp.concatenate((
+        jnp.eye(n_states * n_robots), # initial p
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # other p
+        jnp.zeros((n_states * n_robots, n_states * n_robots * (horizon + 1))), # v
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # u
+    ), axis=1)
+    initial_v = jnp.concatenate((
+        jnp.zeros((n_states * n_robots, n_states * n_robots * (horizon + 1))), # p
+        jnp.eye(n_states * n_robots), # initial v
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # other v
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # u
+    ), axis=1)
+    return jnp.concatenate((
+        initial_p,
+        initial_v,
+    ), axis=0)
 
-def b_from_initial_final_states(
-    initial_states: jnp.ndarray,
-    final_states: jnp.ndarray,
+def get_final_states_extractor(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
 ) -> jnp.ndarray:
-    """Get the b vector from the initial and final states.
+    """Get the A matrix for initial and final constraints of the fleet.
     
     Args:
-        initial_states: Initial states of the fleet.
-        final_states: Final states of the fleet.
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
     
     Returns:
-        b vector of the fleet.
+        Initial and final constraints of the fleet.
     """
-    raise NotImplementedError("b_from_states not implemented.")
+    final_p = jnp.concatenate((
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # other p
+        jnp.eye(n_states * n_robots), # final p
+        jnp.zeros((n_states * n_robots, n_states * n_robots * (horizon + 1))), # v
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # u
+    ), axis=1)
+    final_v = jnp.concatenate((
+        jnp.zeros((n_states * n_robots, n_states * n_robots * (horizon + 1))), # p
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # other v
+        jnp.eye(n_states * n_robots), # final v
+        jnp.zeros((n_states * n_robots, n_states * n_robots * horizon)), # u
+    ), axis=1)
+
+    return jnp.concatenate((
+        final_p,
+        final_v,
+    ), axis=0)
+
 
 def get_jerk_matrix(
     horizon: int,
@@ -278,10 +312,13 @@ def get_jerk_matrix(
     Returns:
         Jerk matrix of the fleet.
     """
-    n_inputs = n_states * n_robots * (horizon - 1)
+    if JAX_DEBUG_JIT:
+        if horizon < 2:
+            raise ValueError("Horizon must be greater than 1.")
+    n_inputs = n_states * n_robots
     J = 1 / h * (
-        jnp.eye((n_inputs - 1, n_inputs), k = 1) 
-        - jnp.eye((n_inputs - 1, n_inputs), k = 0)
+        -jnp.eye((horizon - 1) * n_inputs, n_inputs * horizon)
+        + jnp.eye((horizon - 1) * n_inputs, n_inputs * horizon, k = n_inputs)
     )
     return jnp.concatenate((
-        jnp.zeros((J.shape[0], horizon * n_robots * n_states * 2)), J), axis=1)
+        jnp.zeros((J.shape[0], (horizon + 1) * n_robots * n_states * 2)), J), axis=1)

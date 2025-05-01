@@ -8,6 +8,9 @@ from glitch.definitions.dynamics import (
     get_position_mask,
     get_velocity_mask,
     get_input_mask,
+    get_jerk_matrix,
+    get_initial_states_extractor,
+    get_final_states_extractor,
 )
 from glitch.utils import JAX_DEBUG_JIT
 
@@ -271,8 +274,9 @@ def test_get_flatten_state(p, p_flatten, v, v_flatten):
     fs = FleetStateInput(v, p, jnp.zeros((0, p.shape[1], p.shape[2])))
 
     horizon, n_robots, n_dim = p.shape
+    horizon = horizon - 1
     expected_shape = (
-        2 * horizon * n_dim * n_robots + n_dim * n_robots * (horizon - 1), 1)
+        2 * (horizon + 1) * n_dim * n_robots + n_dim * n_robots * horizon, 1)
     flattened = fs.flatten()
     assert flattened.shape == expected_shape, (
         f"Flattened state does not match expected shape. "
@@ -500,14 +504,14 @@ def test_propagation_over_horizon(
 # ----------------------------------------------------------------------------
 @pytest.mark.parametrize("n_robots", [1, 2, 3])
 @pytest.mark.parametrize("n_dim", [1, 2, 3])
-@pytest.mark.parametrize("horizon", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [0, 1, 2, 3])
 @pytest.mark.parametrize("seed", [0])
 def test_position_mask(n_robots, n_dim, horizon, seed):
     key = jax.random.PRNGKey(seed)
     keyp, keyv, keyu = jax.random.split(key, 3)
-    p = jax.random.uniform(keyp, (horizon, n_robots, n_dim))
-    v = jax.random.uniform(keyv, (horizon, n_robots, n_dim))
-    u = jax.random.uniform(keyu, (horizon - 1, n_robots, n_dim))
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
     fsu = FleetStateInput(v, p, u)
 
     mask = get_position_mask(
@@ -545,9 +549,9 @@ def test_position_mask(n_robots, n_dim, horizon, seed):
 def test_velocity_mask(n_robots, n_dim, horizon, seed):
     key = jax.random.PRNGKey(seed)
     keyp, keyv, keyu = jax.random.split(key, 3)
-    p = jax.random.uniform(keyp, (horizon, n_robots, n_dim))
-    v = jax.random.uniform(keyv, (horizon, n_robots, n_dim))
-    u = jax.random.uniform(keyu, (horizon - 1, n_robots, n_dim))
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
     fsu = FleetStateInput(v, p, u)
 
     mask = get_velocity_mask(
@@ -585,9 +589,9 @@ def test_velocity_mask(n_robots, n_dim, horizon, seed):
 def test_input_mask(n_robots, n_dim, horizon, seed):
     key = jax.random.PRNGKey(seed)
     keyp, keyv, keyu = jax.random.split(key, 3)
-    p = jax.random.uniform(keyp, (horizon, n_robots, n_dim))
-    v = jax.random.uniform(keyv, (horizon, n_robots, n_dim))
-    u = jax.random.uniform(keyu, (horizon - 1, n_robots, n_dim))
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
     fsu = FleetStateInput(v, p, u)
 
     mask = get_input_mask(
@@ -618,10 +622,191 @@ def test_input_mask(n_robots, n_dim, horizon, seed):
         f"Expected:\n{jnp.zeros_like(fsu.u)}, got:\n{fsu.u}"
     )
 
+@pytest.mark.parametrize("n_robots", [1, 2, 3])
+@pytest.mark.parametrize("n_dim", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [1, 2, 3])
+@pytest.mark.parametrize("seed", [0])
+def test_initial_state_extraction(n_robots, n_dim, horizon, seed):
+    # generate random state
+    rng = jax.random.PRNGKey(seed)
+    keyv, keyp, keyu = jax.random.split(rng, 3)
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
+    fsu = FleetStateInput(v, p, u)
 
-def test_jerk_matrix():
-    assert False, "TODO: implement jerk matrix test"
+    # initial state
+    p0 = p[0][None, ...]
+    v0 = v[0][None, ...]
+    fsu0 = FleetStateInput(v0, p0, jnp.zeros((0, n_robots, n_dim)))
+    
+    # extract initial state
+    A_initial = get_initial_states_extractor(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+    )
+    fsu0_extracted = A_initial @ fsu.flatten()
+    assert fsu0_extracted.shape == fsu0.flatten().shape, (
+        "Initial state does not match expected shape. "
+        f"Expected:\n{fsu0.flatten().shape}, got:\n{fsu0_extracted.shape}"
+    )
+    assert jnp.allclose(fsu0_extracted, fsu0.flatten()), (
+        "Initial state does not match expected values. "
+        f"Expected:\n{fsu0.flatten()}, got:\n{fsu0_extracted}"
+    )
 
-def test_assemble_dynamics_constraint():
-    # TODO: check that ([0, A, B] - I)fsu.flatten() = 0 is indeed correct
-    assert False, "TODO: implement assemble_dynamics_constraint test"
+@pytest.mark.parametrize("n_robots", [1, 2, 3])
+@pytest.mark.parametrize("n_dim", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [1, 2, 3])
+@pytest.mark.parametrize("seed", [0])
+def test_final_state_extraction(n_robots, n_dim, horizon, seed):
+    # generate random state
+    rng = jax.random.PRNGKey(seed)
+    keyv, keyp, keyu = jax.random.split(rng, 3)
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
+    fsu = FleetStateInput(v, p, u)
+
+    # final state
+    p0 = p[-1][None, ...]
+    v0 = v[-1][None, ...]
+    fsu0 = FleetStateInput(v0, p0, jnp.zeros((0, n_robots, n_dim)))
+    
+    # extract final state
+    A_final = get_final_states_extractor(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+    )
+    fsu0_extracted = A_final @ fsu.flatten()
+    assert fsu0_extracted.shape == fsu0.flatten().shape, (
+        "Final state does not match expected shape. "
+        f"Expected:\n{fsu0.flatten().shape}, got:\n{fsu0_extracted.shape}"
+    )
+    assert jnp.allclose(fsu0_extracted, fsu0.flatten()), (
+        "Final state does not match expected values. "
+        f"Expected:\n{fsu0.flatten()}, got:\n{fsu0_extracted}"
+    )
+
+
+def test_jerk_matrix_manual_single_robot_single_dim():
+    horizon = 2
+    n_robots = 1
+    n_dim = 1
+    h = 0.1
+    J = get_jerk_matrix(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+        h=h,
+    )
+    n_zeros = (horizon + 1) * n_robots * n_dim * 2
+    expected_J = 1 / h * jnp.array([
+        [*([0] * n_zeros), -1, 1],
+    ])
+    assert J.shape == expected_J.shape, (
+        f"Jerk matrix does not match expected shape. "
+        f"Expected:\n{expected_J.shape}, got:\n{J.shape}"
+    )
+    assert jnp.allclose(J, expected_J), (
+        f"Jerk matrix does not match expected values. "
+        f"Expected:\n{expected_J}, got:\n{J}"
+    )
+
+def test_jerk_matrix_manual_single_robot():
+    horizon = 2
+    n_robots = 1
+    n_dim = 2
+    h = 0.1
+    J = get_jerk_matrix(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+        h=h,
+    )
+    n_zeros = (horizon + 1) * n_robots * n_dim * 2
+    expected_J = 1 / h * jnp.array([
+        [*([0] * n_zeros), -1, 0, 1, 0],
+        [*([0] * n_zeros), 0, -1, 0, 1],
+    ])
+    assert J.shape == expected_J.shape, (
+        f"Jerk matrix does not match expected shape. "
+        f"Expected:\n{expected_J.shape}, got:\n{J.shape}"
+    )
+    assert jnp.allclose(J, expected_J), (
+        f"Jerk matrix does not match expected values. "
+        f"Expected:\n{expected_J}, got:\n{J}"
+    )
+
+def test_jerk_matrix_manual_multiple_robots():
+    horizon = 2
+    n_robots = 2
+    n_dim = 2
+    h = 0.1
+    J = get_jerk_matrix(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+        h=h,
+    )
+    n_zeros = (horizon + 1) * n_robots * n_dim * 2
+    expected_J = 1 / h * jnp.array([
+        [*([0] * n_zeros), -1, 0, 0, 0, 1, 0, 0, 0],
+        [*([0] * n_zeros), 0, -1, 0, 0, 0, 1, 0, 0],
+        [*([0] * n_zeros), 0, 0, -1, 0, 0, 0, 1, 0],
+        [*([0] * n_zeros), 0, 0, 0, -1, 0, 0, 0, 1],
+    ])
+    assert J.shape == expected_J.shape, (
+        f"Jerk matrix does not match expected shape. "
+        f"Expected:\n{expected_J.shape}, got:\n{J.shape}"
+    )
+    assert jnp.allclose(J, expected_J), (
+        f"Jerk matrix does not match expected values. "
+        f"Expected:\n{expected_J}, got:\n{J}"
+    )
+
+
+
+@pytest.mark.parametrize("n_robots", [1, 2, 3])
+@pytest.mark.parametrize("n_dim", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [2, 3])
+@pytest.mark.parametrize("h", [0.1, 0.2, 0.5])
+def test_jerk_matrix(n_robots, n_dim, horizon, h):
+    J = get_jerk_matrix(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+        h=h,
+    )
+    offset = (horizon + 1) * n_robots * n_dim * 2
+    n_inputs = n_robots * n_dim
+    input_differences = jnp.zeros((
+        (horizon - 1) * n_inputs, 
+        horizon * n_inputs + offset
+    ))
+    for i in range(horizon - 1):
+        for j in range(n_inputs):
+            input_idx = i * n_inputs + j
+            next_input_idx = (i + 1) * n_inputs + j
+            input_differences = input_differences.at[
+                input_idx, offset + input_idx].set(-1 / h)
+            input_differences = input_differences.at[
+                input_idx, offset + next_input_idx].set(1 / h)
+
+
+    # Check the shape of the jerk matrix
+    assert J.shape == input_differences.shape, (
+        f"Jerk matrix does not match expected shape. "
+        f"Expected:\n{input_differences.shape}, got:\n{J.shape}"
+    )
+    # Check the values of the jerk matrix
+    assert jnp.allclose(J, input_differences), (
+        f"Jerk matrix does not match expected values. "
+        f"Expected:\n{input_differences}, got:\n{J}"
+    )
+
+# def test_assemble_dynamics_constraint():
+#     # TODO: check that ([0, A, B] - I)fsu.flatten() = 0 is indeed correct
+#     assert False, "TODO: implement assemble_dynamics_constraint test"
