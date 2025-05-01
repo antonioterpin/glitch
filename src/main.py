@@ -12,13 +12,10 @@ from flax.training import train_state
 from hcnn.project import Project
 
 from glitch.definitions.constraints import get_constraints
-from glitch.nn import HardConstrainedMLP, load_model, save_model
+from glitch.nn import HardConstrainedMLP, load_model, save_model, batch_to_input
 from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
-
-def b_from_states(initial_states, final_states):
-    return jnp.concatenate((initial_states, final_states), axis=0)
 
 def build_batched_objective(config_hcnn):
     collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
@@ -46,11 +43,8 @@ def build_steps(project, config_hcnn):
 
     def train_step(state, initial_states, final_states):
         """Run a single training step."""
-        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
-        b_states = b_from_states(initial_states, final_states)
-        b_zeros = jnp.zeros((
-            project.lifted_eq_constraint.n_constraints - b_states.shape[0], 1))
-        b_batch = jnp.concatenate((b_states, b_zeros), axis=0)
+        x_batch, b_batch = batch_to_input(
+            initial_states, final_states, project.eq_constraint.n_constraints)
 
         def loss_fn(params):
             predictions = state.apply_fn(
@@ -68,8 +62,8 @@ def build_steps(project, config_hcnn):
         return loss, state.apply_gradients(grads=grads)
 
     def eval_step(state, initial_states, final_states):
-        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
-        b_batch = b_from_states(initial_states, final_states)
+        x_batch, b_batch = batch_to_input(
+            initial_states, final_states, project.eq_constraint.n_constraints)
 
         predictions = state.apply_fn(
             {"params": state.params}, 
@@ -97,12 +91,13 @@ def load_hcnn(project, config):
     try:
         activation = getattr(nn, config["activation"])
     except AttributeError:
-        raise ValueError(f"Unknown activation '{config["activation"]}'")
+        raise ValueError(f"Unknown activation: {config['activation']}")
 
     return HardConstrainedMLP(
         project=project,
         features_list=config["features"],
         fpi=config["fpi"],
+        unroll=config["unroll"],
         activation=activation,
     )
 
@@ -168,7 +163,7 @@ def argument_parser():
         help="Evaluate the model every eval_every training batches.",
     )
 
-    args = parser.parse_args(args)
+    args = parser.parse_args()
 
     return args
 
@@ -252,6 +247,8 @@ if __name__ == "__main__":
         horizon=config_dataset["problem"]["horizon"],
         n_robots=1, # TODO: Allow the option of coupling the projection
         n_states=config_dataset["problem"]["n_states"],
+        h=config_dataset["problem"]["h"],
+        input_compensation=jnp.array(config_dataset["problem"]["gravity"]),
         config_constraints=config_hcnn
     )
     hcnn = load_hcnn(project, config_hcnn)
@@ -267,8 +264,8 @@ if __name__ == "__main__":
         print("No parameters loaded. Initializing the network parameters from scratch.")
         # Initialize the parameters
         initial_states, final_states = dataset_training[0]
-        x_batch = jnp.concatenate((initial_states, final_states), axis=0)
-        b_batch = b_from_states(initial_states, final_states)
+        x_batch, b_batch = batch_to_input(
+            initial_states, final_states, project.eq_constraint.n_constraints)
         trainable_state = hcnn.init(
             jax.random.PRNGKey(config_hcnn["seed"]),
             x=x_batch,

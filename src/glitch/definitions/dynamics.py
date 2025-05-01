@@ -294,6 +294,70 @@ def get_final_states_extractor(
         final_v,
     ), axis=0)
 
+def get_input_extractor(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+) -> jnp.ndarray:
+    """Get the A matrix for input constraints of the fleet.
+    
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Input constraints of the fleet.
+    """
+    return jnp.concatenate((
+        # p
+        jnp.zeros((horizon * n_robots * n_states, (horizon + 1) * n_robots * n_states)),
+        # v
+        jnp.zeros((horizon * n_robots * n_states, (horizon + 1) * n_robots * n_states)),
+        # u
+        jnp.eye(horizon * n_robots * n_states),
+    ), axis=1)
+
+
+def get_dynamics_outputs_extractor(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+) -> jnp.ndarray:
+    """Get the A matrix for dynamics outputs of the fleet.
+    
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+    
+    Returns:
+        Dynamics outputs of the fleet.
+    """
+    extract_ps = jnp.concatenate((
+        # first p -> skip
+        jnp.zeros((horizon * n_robots * n_states, n_robots * n_states)),
+        # other p
+        jnp.eye(horizon * n_robots * n_states),
+        # v
+        jnp.zeros((horizon * n_robots * n_states, (horizon + 1) * n_robots * n_states)),
+        # u
+        jnp.zeros((horizon * n_robots * n_states, horizon * n_robots * n_states)),
+    ), axis=1)
+    extract_vs = jnp.concatenate((
+        # p
+        jnp.zeros((horizon * n_robots * n_states, (horizon + 1) * n_robots * n_states)),
+        # first v -> skip
+        jnp.zeros((horizon * n_robots * n_states, n_robots * n_states)),
+        # other v
+        jnp.eye(horizon * n_robots * n_states),
+        # u
+        jnp.zeros((horizon * n_robots * n_states, horizon * n_robots * n_states)),
+    ), axis=1)
+    return jnp.concatenate((
+        extract_ps,
+        extract_vs,
+    ), axis=0)
 
 def get_jerk_matrix(
     horizon: int,
@@ -320,5 +384,6 @@ def get_jerk_matrix(
         -jnp.eye((horizon - 1) * n_inputs, n_inputs * horizon)
         + jnp.eye((horizon - 1) * n_inputs, n_inputs * horizon, k = n_inputs)
     )
-    return jnp.concatenate((
-        jnp.zeros((J.shape[0], (horizon + 1) * n_robots * n_states * 2)), J), axis=1)
+    # ((horizon - 1) * n_inputs, N)
+    # N = (horizon + 1) * n_states * n_robots * 2 + horizon * n_inputs
+    return J @ get_input_extractor(horizon, n_robots, n_states)

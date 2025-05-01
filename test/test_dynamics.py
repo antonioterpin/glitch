@@ -11,6 +11,8 @@ from glitch.definitions.dynamics import (
     get_jerk_matrix,
     get_initial_states_extractor,
     get_final_states_extractor,
+    get_input_extractor,
+    get_dynamics_outputs_extractor
 )
 from glitch.utils import JAX_DEBUG_JIT
 
@@ -690,6 +692,68 @@ def test_final_state_extraction(n_robots, n_dim, horizon, seed):
         f"Expected:\n{fsu0.flatten()}, got:\n{fsu0_extracted}"
     )
 
+@pytest.mark.parametrize("n_robots", [1, 2, 3])
+@pytest.mark.parametrize("n_dim", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [1, 2, 3])
+@pytest.mark.parametrize("seed", [0])
+def test_input_extraction(n_robots, n_dim, horizon, seed):
+    # generate random state
+    rng = jax.random.PRNGKey(seed)
+    keyv, keyp, keyu = jax.random.split(rng, 3)
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
+    fsu = FleetStateInput(v, p, u)
+    
+    # extract final state
+    A_input = get_input_extractor(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+    )
+    u_expected = u.flatten()[..., None]
+    u_extracted = A_input @ fsu.flatten()
+    assert u_extracted.shape == u_expected.shape, (
+        "Input does not match expected shape. "
+        f"Expected:\n{u_expected.shape}, got:\n{u_extracted.shape}"
+    )
+    assert jnp.allclose(u_extracted, u_expected), (
+        "Input does not match expected values. "
+        f"Expected:\n{u_expected}, got:\n{u_extracted}"
+    )
+
+@pytest.mark.parametrize("n_robots", [1, 2, 3])
+@pytest.mark.parametrize("n_dim", [1, 2, 3])
+@pytest.mark.parametrize("horizon", [1, 2, 3])
+@pytest.mark.parametrize("seed", [0])
+def test_dynamics_output_extractor(n_robots, n_dim, horizon, seed):
+    # generate random state
+    rng = jax.random.PRNGKey(seed)
+    keyv, keyp, keyu = jax.random.split(rng, 3)
+    p = jax.random.uniform(keyp, (horizon + 1, n_robots, n_dim))
+    v = jax.random.uniform(keyv, (horizon + 1, n_robots, n_dim))
+    u = jax.random.uniform(keyu, (horizon, n_robots, n_dim))
+    fsu = FleetStateInput(v, p, u)
+    
+    # extract final state
+    A_output = get_dynamics_outputs_extractor(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_dim,
+    )
+    x_extracted = A_output @ fsu.flatten()
+    x_expected = jnp.concatenate((
+        p[1:].flatten()[..., None],
+        v[1:].flatten()[..., None],
+    ), axis=0)
+    assert x_extracted.shape == x_expected.shape, (
+        "Input does not match expected shape. "
+        f"Expected:\n{x_expected.shape}, got:\n{x_extracted.shape}"
+    )
+    assert jnp.allclose(x_extracted, x_expected), (
+        "Input does not match expected values. "
+        f"Expected:\n{x_expected}, got:\n{x_extracted}"
+    )
 
 def test_jerk_matrix_manual_single_robot_single_dim():
     horizon = 2
@@ -806,7 +870,3 @@ def test_jerk_matrix(n_robots, n_dim, horizon, h):
         f"Jerk matrix does not match expected values. "
         f"Expected:\n{input_differences}, got:\n{J}"
     )
-
-# def test_assemble_dynamics_constraint():
-#     # TODO: check that ([0, A, B] - I)fsu.flatten() = 0 is indeed correct
-#     assert False, "TODO: implement assemble_dynamics_constraint test"

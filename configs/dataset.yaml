@@ -1,7 +1,9 @@
 problem:
-  n_robots: 10
+  n_robots: 2
   n_states: 3
-  horizon: 10
+  horizon: 2
+  h: 0.1
+  gravity: [0, 0, -9.81] # generalized gravity vector
 
 dataset:
   batch_size: 32

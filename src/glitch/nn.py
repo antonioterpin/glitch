@@ -7,6 +7,7 @@ from flax import linen as nn
 from hcnn.project import Project
 
 from glitch.utils import logger
+from glitch.definitions.dynamics import FleetStateInput
 
 class HardConstrainedMLP(nn.Module):
     """Simple MLP with hard constraints on the output."""
@@ -83,3 +84,28 @@ def load_model(
         trainable_state = pickle.load(f)
     logger.info(f"Model loaded from {trainable_state_path}.pkl")
     return trainable_state
+
+def batch_to_input(
+    initial_states_batched: FleetStateInput, 
+    final_states_batched: FleetStateInput,
+    n_eq: int,):
+    """Convert the batch of initial and final states to the input format.
+
+    Args:
+        initial_states_batched (jax.Array): Batch of initial states.
+        final_states_batched (jax.Array): Batch of final states.
+
+    Returns:
+        jax.Array: The input format for the model.
+    """
+    # initial_states_batched p, v are of dim (B, 1, n_robots, n_states)
+    vmap_flatten = jax.vmap(lambda x: x.flatten())
+    x_batch = jnp.concatenate((
+        vmap_flatten(initial_states_batched),
+        vmap_flatten(final_states_batched),
+    ), axis=0)
+    b_batch = jnp.concatenate((
+        x_batch,
+        jnp.zeros((x_batch.shape[0], n_eq - x_batch.shape[1], 1)),
+    ))
+    return x_batch, b_batch

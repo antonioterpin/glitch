@@ -16,6 +16,8 @@ from glitch.definitions.dynamics import (
     get_dynamics,
     get_initial_states_extractor,
     get_final_states_extractor,
+    get_input_extractor,
+    get_dynamics_outputs_extractor,
 )
 
 def get_working_space_constraints(
@@ -42,10 +44,11 @@ def get_working_space_constraints(
         n_states,
         n_robots,
     )
-    # TODO: get from config
-    lb = -1
-    ub = 1
-    return lb * mask, ub * mask
+    lb = config.get("lower_bound", -1)
+    ub = config.get("upper_bound", 1)
+    lower_bound = jnp.where(mask == 1, lb, -jnp.inf)
+    upper_bound = jnp.where(mask == 1, ub, jnp.inf)
+    return lower_bound, upper_bound
 
 def get_velocity_constraints(
     horizon: int,
@@ -71,10 +74,11 @@ def get_velocity_constraints(
         n_states,
         n_robots,
     )
-    # TODO: get from config
-    lb = -jnp.inf
-    ub = jnp.inf
-    return lb * mask, ub * mask
+    lb = config.get("lower_bound", -jnp.inf)
+    ub = config.get("upper_bound", jnp.inf)
+    lower_bound = jnp.where(mask == 1, lb, -jnp.inf)
+    upper_bound = jnp.where(mask == 1, ub, jnp.inf)
+    return lower_bound, upper_bound
 
 def get_acceleration_constraints(
     horizon: int,
@@ -95,7 +99,7 @@ def get_acceleration_constraints(
         Acceleration constraints.
     """
     if compensation is None:
-        compensation = jnp.zeros((horizon * n_robots * n_states, 1))
+        compensation = jnp.zeros((horizon * n_robots * n_states,))
     elif compensation.ndim != 1:
         raise ValueError("Compensation must be of shape (n_states,)")
     elif compensation.shape[0] != n_states:
@@ -104,8 +108,8 @@ def get_acceleration_constraints(
         )
     else:
         compensation = jnp.tile(
-            compensation[:, None],
-            (horizon * n_robots, 1),
+            compensation,
+            (horizon * n_robots,),
         )
 
     # ---- Box constraints ----
@@ -116,10 +120,13 @@ def get_acceleration_constraints(
         n_states,
         n_robots,
     )
-    # TODO: get from config
-    lb = -1
-    ub = 1
-    return lb * mask - compensation, ub * mask - compensation
+    lb = config.get("lower_bound", -1)
+    ub = config.get("upper_bound", 1)
+    lb_compensated = jnp.ones((n_states * n_robots * horizon,)) * lb - compensation
+    ub_compensated = jnp.ones((n_states * n_robots * horizon,)) * ub - compensation
+    lower_bound = (-jnp.inf * (1 - mask)).at[mask == 1].set(lb_compensated)
+    upper_bound = (jnp.inf * (1 - mask)).at[mask == 1].set(ub_compensated)
+    return lower_bound, upper_bound
 
 def get_jerk_constraints(
     horizon: int,
@@ -142,9 +149,8 @@ def get_jerk_constraints(
     """
     # Affine inequality constraints.
     C = get_jerk_matrix(horizon, n_states, n_robots, h)
-    # TODO: get from config
-    lb = -1 * jnp.ones((C.shape[0], 1))
-    ub = 1 * jnp.ones((C.shape[0], 1))
+    lb = config.get("lower_bound", -1) * jnp.ones((C.shape[0], 1))
+    ub = config.get("upper_bound", 1) * jnp.ones((C.shape[0], 1))
     return C, lb, ub
 
 
@@ -153,6 +159,7 @@ def get_constraints(
     n_states: int,
     n_robots: int,
     h: float,
+    input_compensation: jnp.ndarray,
     config_constraints: dict = None,
 ) -> Project:
     """Compute the constraints.
@@ -170,6 +177,7 @@ def get_constraints(
     # ---- Box constraints ----
     # Note: at the moment, we can decouple all the constraints among the robots
     # TODO: allow to choose this in the config
+
     lb, ub = get_working_space_constraints(
         horizon=horizon,
         n_states=n_states,
@@ -188,18 +196,19 @@ def get_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
+        compensation=input_compensation,
         config=config_constraints,
     )
     lb = jnp.maximum(lb,_lb)
     ub = jnp.minimum(ub,_ub)
 
-    # TODO: add final state constraints if specified in config 
+    # TODO: add initial and final state constraints if specified in config 
     # (needs enabling for variable box constraints)
 
     # TODO: check if using mask can improve efficiency
     box = BoxConstraint(
-        lower_bound=lb,
-        upper_bound=ub,
+        lower_bound=lb[None, ...],
+        upper_bound=ub[None, ...],
     )
 
     # ---- Affine inequality constraints ----
@@ -214,39 +223,46 @@ def get_constraints(
         )
 
         ineq = AffineInequalityConstraint(
-            C=C,
-            lb=lb,
-            ub=ub,
+            C=C[None, ...],
+            lb=lb[None, ...],
+            ub=ub[None, ...],
         )
 
     # ---- Affine equality constraints ----
+    A_initial_states = get_initial_states_extractor(
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=1, # We can decouple the constraints among the robots
+    )
+    A_final_states = get_final_states_extractor(
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=1, # We can decouple the constraints among the robots
+    )
+    A_inputs = get_input_extractor(
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=1, # We can decouple the constraints among the robots
+    )
     A, B = get_dynamics(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
         h=h,
     )
-    A_eq_dynamics = jnp.concatenate((
-        jnp.zeros((B.shape[0], B.shape[0] - (B.shape[1] + A.shape[1]))),
-        A, 
-        B
-    ), axis=1) - jnp.eye(B.shape[0])
+    A_dynamics_outputs = get_dynamics_outputs_extractor(
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=1, # We can decouple the constraints among the robots
+    )
     A_eq = jnp.concatenate((
-        get_initial_states_extractor(
-            horizon=horizon,
-            n_states=n_states,
-            n_robots=1, # We can decouple the constraints among the robots
-        ),
-        get_final_states_extractor(
-            horizon=horizon,
-            n_states=n_states,
-            n_robots=1, # We can decouple the constraints among the robots
-        ),
-        A_eq_dynamics,
+        A_initial_states,
+        A_final_states,
+        A @ A_initial_states + B @ A_inputs - A_dynamics_outputs,
     ), axis=0)
     eq = EqualityConstraint(
-        A = A_eq,
-        b = jnp.zeros((A.shape[0], 1)), # b is considered variable anyway
+        A = A_eq[None, ...],
+        b = jnp.zeros((1, A_eq.shape[0], 1)), # b is considered variable anyway
         method=None,
         var_b=True # We may need to solve for different initial and terminal states
     )
@@ -263,8 +279,8 @@ def get_constraints(
         )
     project = Project(
         box_constraint=box,
-        affine_inequality_constraint=ineq,
-        affine_equality_constraint=eq,
+        ineq_constraint=ineq,
+        eq_constraint=eq,
         unroll=config_constraints["unroll"],
     )
 
