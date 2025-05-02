@@ -12,5 +12,6 @@ learning_rate: 0.001
 features: [64, 64]
 activation: softplus
 seed: 0
-collision_penalty_fn: collision_penalty_log
+collision_penalty_fn: collision_penalty_bump
 collision_penalty: 10
+collision_normalization_factor: 1.0

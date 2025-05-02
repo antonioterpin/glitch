@@ -17,27 +17,34 @@ from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dat
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
 
-def build_batched_objective(config_hcnn):
+def build_batched_objective(config_hcnn, config_problem):
     collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
     try:
         collision_penalty_fn = getattr(preferences, collision_penalty_fn_name)
     except AttributeError:
         raise ValueError(f"Unknown collision penalty '{collision_penalty_fn_name}'")
+    compensation = jnp.array(config_problem["gravity"])
     
     def batched_objective(predictions):
         return (
-            preferences.input_effort(predictions, config_hcnn["compensation"]) 
-            + collision_penalty_fn(predictions, config_hcnn["collision_penalty_value"])
+            preferences.input_effort(predictions, compensation) 
+            + collision_penalty_fn(
+                predictions, 
+                config_hcnn["collision_penalty"], 
+                config_hcnn["collision_normalization_factor"]
+            )
+            
         )
-    return jax.jit(batched_objective)
+    return jax.jit(jax.vmap(batched_objective))
 
-def build_steps(project, config_hcnn):
+def build_steps(project, config_hcnn, config_problem):
     """Build the training and evaluation step functions."""
-    batched_objective = build_batched_objective(config_hcnn)
-    sigma, omega, n_iter, n_iter_bwd = (
+    batched_objective = build_batched_objective(config_hcnn, config_problem)
+    sigma, omega, n_iter_train, n_iter_test, n_iter_bwd = (
         config_hcnn["sigma"],
         config_hcnn["omega"],
-        config_hcnn["n_iter"],
+        config_hcnn["n_iter_train"],
+        config_hcnn["n_iter_test"],
         config_hcnn["n_iter_bwd"],
     )
 
@@ -51,7 +58,7 @@ def build_steps(project, config_hcnn):
                 final_states_batched=final_states,
                 sigma=sigma,
                 omega=omega,
-                n_iter=n_iter, 
+                n_iter=n_iter_train, 
                 n_iter_bwd=n_iter_bwd,
             )
             return batched_objective(predictions).mean()
@@ -66,7 +73,7 @@ def build_steps(project, config_hcnn):
             final_states_batched=final_states,
             sigma=sigma,
             omega=omega,
-            n_iter=n_iter, 
+            n_iter=n_iter_test, 
             n_iter_bwd=n_iter_bwd,
         )
 
@@ -189,21 +196,23 @@ def train_hcnn(
     save_every: int,
     eval_every: int,
     output_dir: str,
-    hcnn_config: dict,
+    config_hcnn: dict,
+    config_problem: dict,
 ):
     """Train the HCNN model."""
     eval_initial_states, eval_final_states = dataset_validation[0]
     train_step, eval_step = build_steps(
         project=projection_layer,
-        hcnn_config=hcnn_config
+        config_hcnn=config_hcnn,
+        config_problem=config_problem,
     )
-    model_name = hcnn_config["model_name"]
+    model_name = config_hcnn["model_name"]
     with (
         GracefulShutdown("Stop detected, finishing epoch...") as g,
         Logger(f"training-{model_name}") as data_logger,
     ):
         for step in (pbar := tqdm(range(len(dataset_training)))):
-            if g.stop_requested:
+            if g.stop:
                 break
             initial_states, final_states = dataset_training[step]
             t = time.time()
@@ -230,7 +239,7 @@ def train_hcnn(
                     "eval_constraint_violation": cv,
                 })
 
-            if step % save_every == 0:
+            if output_dir is not None and step % save_every == 0:
                 save_model(
                     state.params,
                     output_dir,
@@ -295,6 +304,7 @@ if __name__ == "__main__":
         tx=optax.adam(config_hcnn["learning_rate"]),
     )
     
+    output_dir = None
     if args.save_results:
         # Create the output directory if it doesn't exist
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -313,6 +323,7 @@ if __name__ == "__main__":
             eval_every=args.eval_every,
             output_dir=output_dir,
             config_hcnn=config_hcnn,
+            config_problem=config_dataset["problem"],
         )
         training_time = time.time() - training_time_start
         print(f"Training time: {training_time:.5f} seconds")

@@ -1,5 +1,6 @@
 """Module containing the preferences for the optimization."""
 
+import jax
 import jax.numpy as jnp
 
 from glitch.definitions.dynamics import FleetStateInput
@@ -29,16 +30,20 @@ def input_effort(
 def collision_penalty_log(
     fsu: FleetStateInput,
     collision_penalty: float,
+    normalization_factor: float,
 ) -> float:
     """Compute the collision penalty of a fleet state.
 
     Args:
         fsu: Fleet state input.
         collision_penalty: Collision penalty.
+        normalization_factor: This modulates the distance.
 
     Returns:
         Collision penalty.
     """
+    # TODO: to implement this one, we would need to remove the self-collision
+    # from the pairwise distances, whereas for the bump this amounts to a constant.
     raise NotImplementedError(
         "Collision penalty log is not implemented. "
     )
@@ -46,19 +51,33 @@ def collision_penalty_log(
 def collision_penalty_bump(
     fsu: FleetStateInput,
     collision_penalty: float,
+    normalization_factor: float,
 ) -> float:
     """Compute the collision penalty of a fleet state.
 
     Args:
         fsu: Fleet state input.
         collision_penalty: Collision penalty.
+        normalization_factor: This modulates the distance.
 
     Returns:
         Collision penalty.
     """
-    raise NotImplementedError(
-        "Collision penalty bump is not implemented. "
-    )
+    def bump(d: jnp.ndarray) -> float:
+        """Compute the bump penalty.
+
+        Args:
+            d: Distance between two robots.
+
+        Returns:
+            Bump penalty.
+        """
+        return collision_penalty * jnp.exp(-d / normalization_factor)
+    
+    all_distances = _all_pairs_distances(fsu)
+    # TODO: currently, we compute each distance twice.
+    return jnp.sum(jax.vmap(bump)(all_distances.flatten())) / 2
+
 
 def _all_pairs_distances(
     fs: FleetStateInput,
@@ -71,6 +90,14 @@ def _all_pairs_distances(
     Returns:
         Pairwise distances.
     """
-    raise NotImplementedError(
-        "Pairwise distances is not implemented. "
-    )
+    def pairwise_distance(p, all_ps):
+        # p is of shape (1, n_states)
+        # all_ps is of shape (n_robots, n_states)
+        return jnp.linalg.norm(p[None, ...] - all_ps, axis=-1)
+    
+    def all_distances(p):
+        # p is of shape (n_robots, n_states)
+        return jax.vmap(lambda x: pairwise_distance(x, p))(p)
+    
+    # fs.p is of shape (horizon + 1, n_robots, n_states)
+    return jax.vmap(all_distances)(fs.p)
