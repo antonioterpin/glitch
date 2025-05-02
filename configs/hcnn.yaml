@@ -3,15 +3,15 @@ unroll: False
 fpi: False
 autotuning: False
 equilibration: False
-n_iter_train: 100
+n_iter_train: 1000
 n_iter_test: 1000
-n_iter_bwd: 10
-sigma: 1.0
+n_iter_bwd: 100
+sigma: 0.0001
 omega: 1.7
 learning_rate: 0.001
 features: [64, 64]
-activation: softplus
+activation: relu
 seed: 0
 collision_penalty_fn: collision_penalty_bump
 collision_penalty: 10
-collision_normalization_factor: 1.0
+collision_normalization_factor: 10.0

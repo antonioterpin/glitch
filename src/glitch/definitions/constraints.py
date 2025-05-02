@@ -165,7 +165,8 @@ def get_constraints(
     n_robots: int,
     h: float,
     input_compensation: jnp.ndarray,
-    config_constraints: dict = None,
+    config_constraints: dict,
+    config_hcnn: dict,
 ) -> Project:
     """Compute the constraints.
 
@@ -175,6 +176,8 @@ def get_constraints(
         n_robots: Number of robots.
         h: Time discretization.
         config_constraints: Configuration dictionary.
+        autotune: Whether to autotune the constraints.
+        equilibration: Whether to perform matrix equilibration.
 
     Returns:
         Constraints.
@@ -187,13 +190,13 @@ def get_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config_constraints,
+        config=config_constraints["working_space"],
     )
     _lb, _ub = get_velocity_constraints(
         horizon=horizon,
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
-        config=config_constraints,
+        config=config_constraints["velocity"],
     )
     lb = jnp.maximum(lb,_lb,)
     ub = jnp.minimum(ub,_ub,)
@@ -202,7 +205,7 @@ def get_constraints(
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
         compensation=input_compensation,
-        config=config_constraints,
+        config=config_constraints["acceleration"],
     )
     lb = jnp.maximum(lb,_lb)
     ub = jnp.minimum(ub,_ub)
@@ -224,7 +227,7 @@ def get_constraints(
             n_states=n_states,
             n_robots=1, # We can decouple the constraints among the robots
             h=h,
-            config=config_constraints,
+            config=config_constraints["jerk"],
         )
 
         ineq = AffineInequalityConstraint(
@@ -274,8 +277,8 @@ def get_constraints(
 
     # ---- Project ----
     if (
-        config_constraints["autotuning"]
-        or config_constraints["equilibration"]
+        config_hcnn["autotuning"]
+        or config_hcnn["equilibration"]
     ):
         # TODO: autotuning
         # TODO: perform matrix equilibration if specified in config
@@ -286,7 +289,7 @@ def get_constraints(
         box_constraint=box,
         ineq_constraint=ineq,
         eq_constraint=eq,
-        unroll=config_constraints["unroll"],
+        unroll=config_hcnn["unroll"],
     )
 
     return project

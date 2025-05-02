@@ -12,7 +12,13 @@ from flax.training import train_state
 from hcnn.project import Project
 
 from glitch.definitions.constraints import get_constraints
-from glitch.nn import HardConstrainedMLP, load_model, save_model
+from glitch.nn import (
+    HardConstrainedMLP, 
+    load_model, 
+    save_model, 
+    predictions_to_projection_layer_format,
+    prepare_b_from_batch
+)
 from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
@@ -26,6 +32,7 @@ def build_batched_objective(config_hcnn, config_problem):
     compensation = jnp.array(config_problem["gravity"])
     
     def batched_objective(predictions):
+        return jnp.sum(predictions.p ** 2)
         return (
             preferences.input_effort(predictions, compensation) 
             + collision_penalty_fn(
@@ -33,9 +40,8 @@ def build_batched_objective(config_hcnn, config_problem):
                 config_hcnn["collision_penalty"], 
                 config_hcnn["collision_normalization_factor"]
             )
-            
         )
-    return jax.jit(jax.vmap(batched_objective))
+    return jax.vmap(batched_objective)
 
 def build_steps(project, config_hcnn, config_problem):
     """Build the training and evaluation step functions."""
@@ -79,7 +85,11 @@ def build_steps(project, config_hcnn, config_problem):
 
         accuracy = batched_objective(predictions).mean()
         # During training, we report the average constraint violation
-        cv = project.cv(predictions).mean()
+        x = predictions_to_projection_layer_format(predictions)
+        n_eq = project.eq_constraint.n_constraints
+        b = prepare_b_from_batch(n_eq, initial_states, final_states)
+        project.eq_constraint.b = b
+        cv = project.cv(x).mean()
 
         return accuracy, cv
     return jax.jit(train_step), jax.jit(eval_step)
@@ -180,7 +190,7 @@ def argument_parser():
     parser.add_argument(
         "--eval-every",
         type=int,
-        default=1,
+        default=1000,
         help="Evaluate the model every eval_every training batches.",
     )
 
@@ -272,7 +282,8 @@ if __name__ == "__main__":
         n_states=config_dataset["problem"]["n_states"],
         h=config_dataset["problem"]["h"],
         input_compensation=jnp.array(config_dataset["problem"]["gravity"]),
-        config_constraints=config_hcnn
+        config_constraints=config_dataset["problem"]["constraints"],
+        config_hcnn=config_hcnn,
     )
     hcnn = load_hcnn(project, config_hcnn, config_dataset["problem"])
 

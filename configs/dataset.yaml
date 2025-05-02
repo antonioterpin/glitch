@@ -1,12 +1,26 @@
 problem:
-  n_robots: 2
-  n_states: 3
-  horizon: 2
+  n_robots: 1
+  n_states: 2
+  horizon: 10
   h: 0.1
-  gravity: [0, 0, -9.81] # generalized gravity vector
+  # TODO: if gravity is not zero, it should affect also the dynamics
+  gravity: [0, 0] # generalized gravity vector # -9.81
+  constraints:
+    working_space:
+      lower_bound: -100.0
+      upper_bound: 100.0
+    velocity:
+      lower_bound: -5.0
+      upper_bound: 5.0
+    acceleration:
+      lower_bound: -3.0
+      upper_bound: 3.0
+    jerk:
+      lower_bound: -1.0
+      upper_bound: 1.0
 
 dataset:
-  batch_size: 32
+  batch_size: 512
   size: 2048 # -1 to generate indefinitely for training
   val_size: 512
   test_size: 512
