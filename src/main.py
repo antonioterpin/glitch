@@ -23,6 +23,8 @@ from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dat
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
 
+jax.config.update("jax_enable_x64", True)
+
 def build_batched_objective(config_hcnn, config_problem):
     collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
     try:

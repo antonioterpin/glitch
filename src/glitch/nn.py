@@ -37,8 +37,6 @@ class HardConstrainedMLP(nn.Module):
         # TODO: allow the projection to be coupled
         x = nn.Dense(self.project.dim * self.fsu.n_robots)(x)
         x = jax.vmap(self.fsu.unpack)(x)
-        print(f"{initial_states_batched.p[0]=}")
-        print(f"{final_states_batched.p[0]=}")
         if not raw:
             n_eq = self.project.eq_constraint.n_constraints
             batch_size = initial_states_batched.p.shape[0]
@@ -71,9 +69,8 @@ class HardConstrainedMLP(nn.Module):
                     n_iter_bwd=n_iter_bwd,
                     fpi=self.fpi,
                 )[0]
-            cv = self.project.eq_constraint.A[0, ...] @ x[0, ...]
-            cv = jnp.sum((cv - b[0, ...]) ** 2)
-            print(f"{cv=}")
+            self.project.eq_constraint.b = b
+            cv = self.project.eq_constraint.cv(x[..., None]).mean()
             
             # we need to undo the rebatching
             x = projection_layer_format_to_predictions(
@@ -83,8 +80,6 @@ class HardConstrainedMLP(nn.Module):
                 horizon=self.fsu.horizon,
                 n_states=self.fsu.n_states
             )
-            print(f"{x.p[0][0]=}")
-            print(f"{x.p[0][-1]=}")
 
         # x is now shape (batch_size, horizon(+1), n_robots, n_states)
         return x
@@ -131,7 +126,6 @@ def batch_robots(fleet_state: FleetStateInput) -> FleetStateInput:
     Returns:
         FleetStateInput: The rebatch fleet state.
     """
-    print(f"{fleet_state.p.shape=}")
     # (n_robots, horizon, 1, n_states)
     rebatched = jax.vmap(
         # (horizon, n_states)
@@ -143,7 +137,6 @@ def batch_robots(fleet_state: FleetStateInput) -> FleetStateInput:
         in_axes=1,
         out_axes=0
     )(fleet_state) # (horizon, n_robots, n_states)
-    print(f"{rebatched.p.shape=}")
     return rebatched
 
 def unbatch_robots(fleet_state: jnp.ndarray, horizon: int, n_states: int) -> FleetStateInput:
@@ -196,8 +189,6 @@ def vmap_flatten(x_batched, y_batched):
     )
 
 def predictions_to_projection_layer_format(x):
-    print(f"{x.p.shape=}")
-    print(f"{x.u.shape=}")
     # x is now shape (batch_size, horizon(+1), n_robots, n_states),
     # we reshape it as for b1
     # x_list is (batch_size, n_robots, horizon(+1) * n_states, 1)
