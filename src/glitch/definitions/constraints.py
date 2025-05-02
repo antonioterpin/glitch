@@ -40,9 +40,9 @@ def get_working_space_constraints(
     # ---- Box constraints ----
     # Position constraints.
     mask = get_position_mask(
-        horizon,
-        n_states,
-        n_robots,
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=n_robots,
     )
     lb = config.get("lower_bound", -1)
     ub = config.get("upper_bound", 1)
@@ -70,9 +70,9 @@ def get_velocity_constraints(
     # ---- Box constraints ----
     # Velocity constraints.
     mask = get_velocity_mask(
-        horizon,
-        n_states,
-        n_robots,
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=n_robots,
     )
     lb = config.get("lower_bound", -jnp.inf)
     ub = config.get("upper_bound", jnp.inf)
@@ -116,9 +116,9 @@ def get_acceleration_constraints(
     # TODO: allow second order cone constraints
     # Acceleration constraints.
     mask = get_input_mask(
-        horizon,
-        n_states,
-        n_robots,
+        horizon=horizon,
+        n_states=n_states,
+        n_robots=n_robots,
     )
     lb = config.get("lower_bound", -1)
     ub = config.get("upper_bound", 1)
@@ -148,7 +148,12 @@ def get_jerk_constraints(
         Jerk constraints.
     """
     # Affine inequality constraints.
-    C = get_jerk_matrix(horizon, n_states, n_robots, h)
+    C = get_jerk_matrix(
+        horizon=horizon,
+        n_states=n_states, 
+        n_robots=n_robots, 
+        h=h
+    )
     lb = config.get("lower_bound", -1) * jnp.ones((C.shape[0], 1))
     ub = config.get("upper_bound", 1) * jnp.ones((C.shape[0], 1))
     return C, lb, ub

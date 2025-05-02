@@ -15,19 +15,71 @@ class HardConstrainedMLP(nn.Module):
     features_list: list
     unroll: bool # True if unrolling is used in the projection layer
     fpi: bool
+    fsu: FleetStateInput # Dummy FleetStateInput for dimensions
     activation: nn.Module = nn.softplus
 
     @nn.compact
-    def __call__(self, x, b, sigma, omega, n_iter=100, n_iter_bwd=100, raw=False):
+    def __call__(
+        self, 
+        initial_states_batched, 
+        final_states_batched, 
+        sigma, 
+        omega, 
+        n_iter=100, 
+        n_iter_bwd=100, 
+        raw=False
+    ):
         """Call the NN."""
+        x = vmap_flatten(initial_states_batched, final_states_batched).squeeze(-1)
         for features in self.features_list:
             x = nn.Dense(features)(x)
             x = self.activation(x)
-        x = nn.Dense(self.project.dim)(x)
+        x = nn.Dense(self.project.dim * self.fsu.n_robots)(x)
+        x = jax.vmap(self.fsu.unpack)(x)
         if not raw:
-            raise NotImplementedError(
-                "Re-batching of the raw output is not implemented."
+            n_eq = self.project.eq_constraint.n_constraints
+            batch_size = initial_states_batched.p.shape[0]
+            # TODO: allow the projection to be coupled
+
+            # rebatch so that the projection is for each robot
+            # NOTE: All of the following is to decouple from how the fsu is flattened
+            # initial/final_states_batched: (batch_size, 1, n_robots, n_states)
+            # batch_robots(x/y) is (n_robots, 1, 1, n_states), 
+            # x is (1, n_robots, n_states)
+            # vmap_flatten(n_robots, n_states)
+            # b1_list is (batch_size, n_robots, n_states * 2 * 2, 1)
+            b1_list = jax.vmap(
+                # initial_states are (1, n_robots, n_states)
+                lambda initial_states, final_states: vmap_flatten(
+                    batch_robots(initial_states, ), 
+                    batch_robots(final_states)),
+                in_axes=(0, 0), 
+                out_axes=0
+            )(initial_states_batched, final_states_batched)
+            # b1 is (batch_size * n_robots, n_states * 2 * 2, 1)
+            b1 = jnp.concatenate(b1_list, axis=0)
+            # add zeros to the second channel of b1 to match n_eq
+            # so b has shape (batch_size * n_robots, n_eq, 1)
+            b = jnp.concatenate(
+                (b1, jnp.zeros((b1.shape[0], n_eq - b1.shape[1], 1))), 
+                axis=1
             )
+            
+            # x is now shape (batch_size, horizon(+1), n_robots, n_states),
+            # we reshape it as for b1
+            # x_list is (batch_size, n_robots, horizon(+1) * n_states, 1)
+            x_list = jax.vmap(
+                # robots_trajectory: (horizon(+1), n_robots, n_states)
+                lambda robots_trajectory: jax.vmap(
+                    # robot_trajectory: (horizon(+1), 1, n_states)
+                    # flatten: (horizon(+1) * n_states, 1)
+                    lambda robot_trajectory: robot_trajectory.flatten()
+                )(
+                    # shape (n_robots, horizon(+1), 1, n_states)
+                    batch_robots(robots_trajectory)
+                ))(x)
+            # x is now shape (batch_size * n_robots, horizon(+1) * n_states, 1)
+            x = jnp.concatenate(x_list, axis=0)
             init = self.project.get_init(x)
             if self.unroll:
                 x = self.project.call(
@@ -50,6 +102,11 @@ class HardConstrainedMLP(nn.Module):
                     n_iter_bwd=n_iter_bwd,
                     fpi=self.fpi,
                 )[0]
+            # we need to undo the rebatching
+            x = x.reshape(batch_size, self.fsu.n_robots, -1)
+            x = unbatch_robots(x, self.fsu.horizon, self.fsu.n_states)
+
+        # x is now shape (batch_size, horizon(+1), n_robots, n_states)
         return x
 
 def save_model(
@@ -85,27 +142,70 @@ def load_model(
     logger.info(f"Model loaded from {trainable_state_path}.pkl")
     return trainable_state
 
-def batch_to_input(
-    initial_states_batched: FleetStateInput, 
-    final_states_batched: FleetStateInput,
-    n_eq: int,):
-    """Convert the batch of initial and final states to the input format.
+def batch_robots(fleet_state: FleetStateInput) -> FleetStateInput:
+    """Rebatch the fleet state to have the robots as the first dimension.
 
     Args:
-        initial_states_batched (jax.Array): Batch of initial states.
-        final_states_batched (jax.Array): Batch of final states.
+        fleet_state (FleetStateInput): The fleet state to rebatch.
 
     Returns:
-        jax.Array: The input format for the model.
+        FleetStateInput: The rebatch fleet state.
     """
-    # initial_states_batched p, v are of dim (B, 1, n_robots, n_states)
-    vmap_flatten = jax.vmap(lambda x: x.flatten())
-    x_batch = jnp.concatenate((
-        vmap_flatten(initial_states_batched),
-        vmap_flatten(final_states_batched),
-    ), axis=0)
-    b_batch = jnp.concatenate((
-        x_batch,
-        jnp.zeros((x_batch.shape[0], n_eq - x_batch.shape[1], 1)),
-    ))
-    return x_batch, b_batch
+    return jax.vmap(
+        lambda x: FleetStateInput(
+            p=x.p[:, None, ...],
+            v=x.v[:, None, ...],
+            u=x.u[:, None, ...],
+        ),
+        in_axes=1,
+        out_axes=0
+    )(fleet_state)
+
+def unbatch_robots(fleet_state: jnp.ndarray, horizon: int, n_states: int) -> FleetStateInput:
+    """Unbatch the fleet state so that robots are with the fleet.
+
+    Args:
+        fleet_state (jnp.ndarray): The fleet state to unbatch.
+            (batch_size, n_robots, n_states)
+
+    Returns:
+        FleetStateInput: The rebatch fleet state.
+    """
+    fsu_mock = FleetStateInput(
+        p=jnp.zeros((horizon + 1, 1, n_states)),
+        v=jnp.zeros((horizon + 1, 1, n_states)),
+        u=jnp.zeros((horizon + 1, 1, n_states)),
+    )
+    def body_fun(x):
+        # x is of shape (n_robots, dim_flatten)
+        # fsu_mock.unpack(r) is of shape (horizon( + 1), 1, n_states)
+        # robots_unpacked is of shape (n_robots, horizon( + 1), 1, n_states)
+        robots_unpacked = jax.vmap(lambda r: fsu_mock.unpack(r))(x)
+        ps = jnp.concatenate(jax.vmap(lambda r: r.p)(robots_unpacked), axis=1)
+        vs = jnp.concatenate(jax.vmap(lambda r: r.v)(robots_unpacked), axis=1)
+        us = jnp.concatenate(jax.vmap(lambda r: r.u)(robots_unpacked), axis=1)
+        return FleetStateInput(
+            p=ps,
+            v=vs,
+            u=us,
+        )
+
+    return jax.vmap(body_fun)(fleet_state)
+
+def vmap_flatten(x_batched, y_batched):
+    """Flatten the input and output of the model.
+
+    Args:
+        x_batched (FleetStateInput): The initial states.
+        y_batched (FleetStateInput): The final states.
+
+    Returns:
+        jnp.ndarray: The flattened input and output.
+    """
+    return jax.vmap(lambda x, y: jnp.concatenate(
+        (x.flatten(), y.flatten()), axis=0),
+        in_axes=(0, 0), out_axes=0
+    )(
+        x_batched,
+        y_batched
+    )

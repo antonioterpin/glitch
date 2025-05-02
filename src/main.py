@@ -12,7 +12,7 @@ from flax.training import train_state
 from hcnn.project import Project
 
 from glitch.definitions.constraints import get_constraints
-from glitch.nn import HardConstrainedMLP, load_model, save_model, batch_to_input
+from glitch.nn import HardConstrainedMLP, load_model, save_model
 from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
@@ -43,14 +43,12 @@ def build_steps(project, config_hcnn):
 
     def train_step(state, initial_states, final_states):
         """Run a single training step."""
-        x_batch, b_batch = batch_to_input(
-            initial_states, final_states, project.eq_constraint.n_constraints)
 
         def loss_fn(params):
             predictions = state.apply_fn(
                 {"params": params}, 
-                x=x_batch, 
-                b=b_batch, 
+                initial_states_batched=initial_states,
+                final_states_batched=final_states,
                 sigma=sigma,
                 omega=omega,
                 n_iter=n_iter, 
@@ -62,13 +60,10 @@ def build_steps(project, config_hcnn):
         return loss, state.apply_gradients(grads=grads)
 
     def eval_step(state, initial_states, final_states):
-        x_batch, b_batch = batch_to_input(
-            initial_states, final_states, project.eq_constraint.n_constraints)
-
         predictions = state.apply_fn(
             {"params": state.params}, 
-            x=x_batch, 
-            b=b_batch, 
+            initial_states_batched=initial_states, 
+            final_states_batched=final_states,
             sigma=sigma,
             omega=omega,
             n_iter=n_iter, 
@@ -82,22 +77,41 @@ def build_steps(project, config_hcnn):
         return accuracy, cv
     return jax.jit(train_step), jax.jit(eval_step)
 
-def load_hcnn(project, config):
+def load_hcnn(project, config_hcnn, config_problem):
     """Load the HCNN model based on the configuration.
     
     Args:
         config (dict): Configuration dictionary containing HCNN parameters.
     """
     try:
-        activation = getattr(nn, config["activation"])
+        activation = getattr(nn, config_hcnn["activation"])
     except AttributeError:
-        raise ValueError(f"Unknown activation: {config['activation']}")
+        raise ValueError(f"Unknown activation: {config_hcnn['activation']}")
+    
+    # Dummy fsu
+    p = jnp.zeros((
+        config_problem["horizon"] + 1, 
+        config_problem["n_robots"], 
+        config_problem["n_states"]
+    ))
+    v = jnp.zeros((
+        config_problem["horizon"] + 1, 
+        config_problem["n_robots"], 
+        config_problem["n_states"]
+    ))
+    u = jnp.zeros((
+        config_problem["horizon"], 
+        config_problem["n_robots"], 
+        config_problem["n_states"]
+    ))
+    fsu = preferences.FleetStateInput(p=p, v=v, u=u)
 
     return HardConstrainedMLP(
         project=project,
-        features_list=config["features"],
-        fpi=config["fpi"],
-        unroll=config["unroll"],
+        fsu=fsu,
+        features_list=config_hcnn["features"],
+        fpi=config_hcnn["fpi"],
+        unroll=config_hcnn["unroll"],
         activation=activation,
     )
 
@@ -251,7 +265,7 @@ if __name__ == "__main__":
         input_compensation=jnp.array(config_dataset["problem"]["gravity"]),
         config_constraints=config_hcnn
     )
-    hcnn = load_hcnn(project, config_hcnn)
+    hcnn = load_hcnn(project, config_hcnn, config_dataset["problem"])
 
     # Possibly load a pre-trained model
     trainable_state = None
@@ -264,12 +278,10 @@ if __name__ == "__main__":
         print("No parameters loaded. Initializing the network parameters from scratch.")
         # Initialize the parameters
         initial_states, final_states = dataset_training[0]
-        x_batch, b_batch = batch_to_input(
-            initial_states, final_states, project.eq_constraint.n_constraints)
         trainable_state = hcnn.init(
             jax.random.PRNGKey(config_hcnn["seed"]),
-            x=x_batch,
-            b=b_batch,
+            initial_states_batched=initial_states, 
+            final_states_batched=final_states,
             sigma=config_hcnn["sigma"],
             omega=config_hcnn["omega"],
             n_iter=2,
