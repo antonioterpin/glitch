@@ -35,12 +35,12 @@ class TransitionsDataset():
         self.offset = offset
         
         initial_positions_box = jnp.concatenate((
-            -1.0 * jnp.ones((n_states, 1)),
-            1.0 * jnp.ones((n_states, 1)),
+            -4.0 * jnp.ones((n_states, 1)),
+            -3.0 * jnp.ones((n_states, 1)),
         ), axis=1)
         final_positions_box = jnp.concatenate((
-            2.0 * jnp.ones((n_states, 1)),
             3.0 * jnp.ones((n_states, 1)),
+            4.0 * jnp.ones((n_states, 1)),
         ), axis=1)
 
         self.sample_initial_states = jax.vmap(
