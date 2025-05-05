@@ -7,6 +7,7 @@ from glitch.definitions.dynamics import FleetStateInput
 
 
 def sample_from_line(
+    key: jax.random.PRNGKey,
     p1: jax.numpy.ndarray,
     p2: jax.numpy.ndarray,
     n_robots: int,
@@ -30,6 +31,7 @@ def sample_from_line(
     alphas = jnp.linspace(0, 1, n_robots)
 
     positions = p1 + alphas[:, None] * (p2 - p1)
+    positions = jax.random.permutation(key, positions, axis=0)
     return FleetStateInput(
         p=positions[None, :, :],
         v=jnp.zeros_like(positions[None, :, :]),
@@ -37,6 +39,7 @@ def sample_from_line(
     )
 
 def sample_from_circle(
+    key: jax.random.PRNGKey,
     center: jax.numpy.ndarray,
     radius: float,
     n_robots: int,
@@ -62,6 +65,7 @@ def sample_from_circle(
 
     angles = jnp.linspace(0, 2 * jnp.pi, n_robots, endpoint=False)
     positions = center + radius * jnp.stack((jnp.cos(angles), jnp.sin(angles)), axis=1)
+    positions = jax.random.permutation(key, positions, axis=0)
     velocities = jnp.zeros_like(positions)
     return FleetStateInput(
         p=positions[None, :, :],

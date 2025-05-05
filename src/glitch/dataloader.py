@@ -40,32 +40,36 @@ class TransitionsDataset():
         self.offset = offset
 
         def sample_initial_states_from_line(key):
-            p1 = jax.random.uniform(key, (1, 2), minval=-4.5, maxval=-3.5)
-            p2_x = jax.random.uniform(key, (1, 1), minval=-4.5, maxval=-3.5)
-            p2_y = jax.random.uniform(key, (1, 1), minval=3.5, maxval=4.5)
+            key_p1, key_p2x, key_p2y, key_line = jax.random.split(key, 4)
+            p1 = jax.random.uniform(key_p1, (1, 2), minval=-4.5, maxval=-3.5)
+            p2_x = jax.random.uniform(key_p2x, (1, 1), minval=-4.5, maxval=-3.5)
+            p2_y = jax.random.uniform(key_p2y, (1, 1), minval=3.5, maxval=4.5)
             p2 = jnp.concatenate((p2_x, p2_y), axis=1)
-            return sample_from_line(p1, p2, n_robots)
+            return sample_from_line(key_line, p1, p2, n_robots)
         
         def sample_final_states_from_line(key):
-            p3 = jax.random.uniform(key, (1, 2), minval=3.5, maxval=4.5)
-            p4_x = jax.random.uniform(key, (1, 1), minval=3.5, maxval=4.5)
-            p4_y = jax.random.uniform(key, (1, 1), minval=-4.5, maxval=-3.5)
+            key_p3, key_p4x, key_p4y, key_line = jax.random.split(key, 4)
+            p3 = jax.random.uniform(key_p3, (1, 2), minval=3.5, maxval=4.5)
+            p4_x = jax.random.uniform(key_p4x, (1, 1), minval=3.5, maxval=4.5)
+            p4_y = jax.random.uniform(key_p4y, (1, 1), minval=-4.5, maxval=-3.5)
             p4 = jnp.concatenate((p4_x, p4_y), axis=1)
-            return sample_from_line(p3, p4, n_robots)
+            return sample_from_line(key_line, p3, p4, n_robots)
         
         def sample_initial_states_from_circle(key):
-            center_x = jax.random.uniform(key, (1, 1), minval=-3.25, maxval=-3)
-            center_y = jax.random.uniform(key, (1, 1), minval=-3.25, maxval=3.25)
+            key_x, key_y, key_r, key_circle = jax.random.split(key, 4)
+            center_x = jax.random.uniform(key_x, (1, 1), minval=-3.25, maxval=-3)
+            center_y = jax.random.uniform(key_y, (1, 1), minval=-3.25, maxval=3.25)
             center = jnp.concatenate((center_x, center_y), axis=1)
-            radius = jax.random.uniform(key, (), minval=0.5, maxval=1.5)
-            return sample_from_circle(center, radius, n_robots)
+            radius = jax.random.uniform(key_r, (), minval=0.5, maxval=1.5)
+            return sample_from_circle(key_circle, center, radius, n_robots)
         
         def sample_final_states_from_circle(key):
-            center_x = jax.random.uniform(key, (1, 1), minval=3, maxval=3.25)
-            center_y = jax.random.uniform(key, (1, 1), minval=-3.25, maxval=3.25)
+            key_x, key_y, key_r, key_circle = jax.random.split(key, 4)
+            center_x = jax.random.uniform(key_x, (1, 1), minval=3, maxval=3.25)
+            center_y = jax.random.uniform(key_y, (1, 1), minval=-3.25, maxval=3.25)
             center = jnp.concatenate((center_x, center_y), axis=1)
-            radius = jax.random.uniform(key, (), minval=0.5, maxval=1.5)
-            return sample_from_circle(center, radius, n_robots)
+            radius = jax.random.uniform(key_r, (), minval=0.5, maxval=1.5)
+            return sample_from_circle(key_circle, center, radius, n_robots)
         
         def sample_initial_states(key):
             fns = [sample_initial_states_from_line, sample_initial_states_from_circle]
