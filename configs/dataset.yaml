@@ -3,7 +3,7 @@ name: single_robot
 problem:
   n_robots: 1
   n_states: 2
-  horizon: 10 # plan over 10 seconds
+  horizon: 5 # plan over horizon * h seconds
   h: 1 # time step of the optimization, the control is finer
   # TODO: if gravity is not zero, it should affect also the dynamics
   gravity: [0, 0] # generalized gravity vector # -9.81
@@ -14,16 +14,16 @@ problem:
       upper_bound: 5.0
     velocity:
       # m/s
-      lower_bound: -100.0
-      upper_bound: 100.0
+      lower_bound: -20.0
+      upper_bound: 20.0
     acceleration:
       # m/s^2
-      lower_bound: -100.0
-      upper_bound: 100.0
+      lower_bound: -5.0
+      upper_bound: 5.0
     jerk:
       # m/s^3
-      lower_bound: -200.0
-      upper_bound: 200.0
+      lower_bound: -5.0
+      upper_bound: 5.0
 
 dataset:
   batch_size: 512

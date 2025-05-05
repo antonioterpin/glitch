@@ -27,6 +27,16 @@ def input_effort(
 
     return jnp.linalg.norm((fsu.u + compensation[None, None, :]), axis=-1).mean()
 
+def repulsion_loss(p, fn):
+    # compute all pairwise differences: shape [R, C, C, D]
+    diffs = p[:, :, None, :] - p[:, None, :, :]
+    # norm over the last (feature) axis: shape [R, C, C]
+    dists = jnp.linalg.norm(diffs, axis=-1)
+    # build mask that is 0 on the diagonal (i==j), 1 elsewhere: shape [C, C]
+    mask = 1.0 - jnp.eye(p.shape[1])
+    # apply bump elementwise and sum over everything
+    return jnp.sum(fn(dists) * mask)
+
 def collision_penalty_log(
     fsu: FleetStateInput,
     collision_penalty: float,
@@ -74,30 +84,6 @@ def collision_penalty_bump(
         """
         return collision_penalty * jnp.exp(-d / normalization_factor)
     
-    all_distances = _all_pairs_distances(fsu)
-    # TODO: currently, we compute each distance twice.
-    return jnp.sum(jax.vmap(bump)(all_distances.flatten())) / 2
-
-
-def _all_pairs_distances(
-    fs: FleetStateInput,
-):
-    """Compute the pairwise distances between all robots.
-
-    Args:
-        fs: Fleet state.
-
-    Returns:
-        Pairwise distances.
-    """
-    def pairwise_distance(p, all_ps):
-        # p is of shape (1, n_states)
-        # all_ps is of shape (n_robots, n_states)
-        return jnp.linalg.norm(p[None, ...] - all_ps, axis=-1)
-    
-    def all_distances(p):
-        # p is of shape (n_robots, n_states)
-        return jax.vmap(lambda x: pairwise_distance(x, p))(p)
-    
-    # fs.p is of shape (horizon + 1, n_robots, n_states)
-    return jax.vmap(all_distances)(fs.p)
+    l = repulsion_loss(fsu.p, bump).sum()
+    print(l)
+    return l

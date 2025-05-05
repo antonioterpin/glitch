@@ -44,8 +44,6 @@ def plot_trajectory(
     saturation = 0.8          # color saturation (0=gray, 1=full)
 
     for i in range(n_robots):
-        traj = trajectories[:, i, :]  # shape: (horizon, 2)
-
         # Build a color for each time‐segment using HSV -> RGB
         # We hold hue constant per robot (evenly spaced around the color wheel),
         # vary 'value' from v_min to v_max over time.
@@ -56,11 +54,6 @@ def plot_trajectory(
             rgb = colorsys.hsv_to_rgb(hue, saturation, value)
             seg_colors.append(rgb)
 
-        # Create line segments between successive timepoints
-        segments = np.stack([traj[:-1], traj[1:]], axis=1)  # shape: (horizon-1, 2, 2)
-        lc = LineCollection(segments, colors=seg_colors, linewidths=2)
-        ax.add_collection(lc)
-
         # Plot start (triangle '^') and end ('s') markers
         start_rgb = colorsys.hsv_to_rgb(hue, saturation, v_min)
         end_rgb   = colorsys.hsv_to_rgb(hue, saturation, v_max)
@@ -68,6 +61,18 @@ def plot_trajectory(
                    s=100, edgecolors='k', label=f'Robot {i} start' if i == 0 else "")
         ax.scatter(*final_positions[i],   marker='s', c=[end_rgb],
                    s=100, edgecolors='k', label=f'Robot {i} end' if i == 0 else "")
+
+        traj = trajectories[:, i, :]  # shape: (horizon, 2)
+        # # Create line segments between successive timepoints
+        # segments = np.stack([traj[:-1], traj[1:]], axis=1)  # shape: (horizon-1, 2, 2)
+        # lc = LineCollection(segments, colors=seg_colors, linewidths=2)
+        # ax.add_collection(lc)
+
+        # Add filled circles at each point in the trajectory
+        for t, point in enumerate(traj):
+            value = v_min + (v_max - v_min) * (t / (horizon - 1))
+            rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+            ax.scatter(*point, color=[rgb], s=30, edgecolors='black')
         
     # Set labels and title
     ax.set_aspect('equal', 'box')

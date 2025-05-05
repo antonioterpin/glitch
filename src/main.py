@@ -3,6 +3,7 @@ import datetime
 import os
 import time
 
+import jax.flatten_util
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -75,7 +76,14 @@ def build_steps(project, config_hcnn, config_problem):
             return batched_objective(predictions).mean()
 
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
-        return loss, state.apply_gradients(grads=grads)
+
+        # Turn the pytree into one 1-D vector:
+        grads_flat, _ = jax.flatten_util.ravel_pytree(grads)
+
+        # Compute the L2 norm:
+        grad_norm = jnp.linalg.norm(grads_flat)
+
+        return loss, state.apply_gradients(grads=grads), grad_norm
 
     def eval_step(state, initial_states, final_states):
         predictions = state.apply_fn(
@@ -97,6 +105,7 @@ def build_steps(project, config_hcnn, config_problem):
         cv = project.cv(x).mean()
 
         return accuracy, cv, predictions
+    # return train_step, eval_step
     return jax.jit(train_step), jax.jit(eval_step)
 
 def load_hcnn(project, config_hcnn, config_problem):
@@ -226,7 +235,7 @@ def train_hcnn(
                 break
             initial_states, final_states = dataset_training[step]
             t = time.time()
-            loss, state = train_step(
+            loss, state, grad_norm = train_step(
                 state, 
                 initial_states,
                 final_states,
@@ -236,6 +245,7 @@ def train_hcnn(
             data_logger.log(step, {
                 "loss": loss,
                 "batch_training_time": t,
+                "grads_norms": grad_norm,
             })
 
             if step % eval_every == 0:
