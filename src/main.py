@@ -39,9 +39,11 @@ def build_batched_objective(config_hcnn, config_problem):
         raise ValueError(f"Unknown collision penalty '{collision_penalty_fn_name}'")
     compensation = jnp.array(config_problem["gravity"])
     
-    def batched_objective(predictions):
+    def batched_objective(predictions, initial_states, final_states):
         return (
             preferences.input_effort(predictions, compensation, h) 
+            +
+            0.05 * preferences.reward_2d_single_agent(predictions)
             # + collision_penalty_fn(
             #     predictions, 
             #     config_hcnn["collision_penalty"], 
@@ -74,7 +76,7 @@ def build_steps(project, config_hcnn, config_problem):
                 n_iter=n_iter_train, 
                 n_iter_bwd=n_iter_bwd,
             )
-            return batched_objective(predictions).mean()
+            return batched_objective(predictions, initial_states, final_states).mean()
 
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
 
@@ -97,7 +99,7 @@ def build_steps(project, config_hcnn, config_problem):
             n_iter_bwd=n_iter_bwd,
         )
 
-        accuracy = batched_objective(predictions).mean()
+        accuracy = batched_objective(predictions, initial_states, final_states).mean()
         # During training, we report the average constraint violation
         x = predictions_to_projection_layer_format(predictions)
         n_eq = project.eq_constraint.n_constraints
@@ -175,12 +177,6 @@ def argument_parser():
         type=str,
         default=None,
         help="Path to the trained model to load.",
-    )
-
-    parser.add_argument(
-        "--plot-training-curves",
-        action="store_true",
-        help="Plot training curves.",
     )
 
     parser.add_argument(
@@ -271,7 +267,8 @@ def train_hcnn(
             pbar.set_description(
                 f"Loss: {loss:.4f}, "
                 f"Validation Loss: {validation_loss:.4f}, "
-                f"Validation CV: {validation_cv:.4f}")
+                f"Validation CV: {validation_cv:.4f}, "
+                f"Grad Norm: {grad_norm:.4f}.")
 
     return state
 

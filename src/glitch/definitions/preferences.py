@@ -6,6 +6,69 @@ import jax.numpy as jnp
 from glitch.definitions.dynamics import FleetStateInput
 from glitch.utils import JAX_DEBUG_JIT
 
+def coverage(
+    fsu: FleetStateInput,
+    coverage_radius: float,
+    min_x: float,
+    max_x: float,
+    min_y: float,
+    max_y: float,
+    pixels_per_meter: int,
+) -> float:
+    """Compute the coverage of a fleet state.
+
+    Args:
+        fsu: Fleet state input.
+        coverage_radius: Coverage radius.
+        min_x: Minimum x coordinate.
+        max_x: Maximum x coordinate.
+        min_y: Minimum y coordinate.
+        max_y: Maximum y coordinate.
+        pixels_per_meter: Pixels per meter.
+
+    Returns:
+        Coverage.
+    """
+    
+    
+
+def ishigami(v: jnp.ndarray) -> jnp.ndarray:
+    r"""
+    Computes the Ishigami function.
+
+    .. math::
+        f(v) = \sin(z_1) + 7 \sin(z_2)^2 + 0.1 \left(\frac{z_1 + z_2}{2}\right)^4 \sin(z_1)
+
+    Parameters
+    ----------
+    v : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        The result of the Ishigami function.
+    """
+    v *= 1.25
+    d = v.shape[0]
+    v0 = jnp.mean(v[:d//2])
+    v1 = jnp.mean(v[d//2:])
+    v2 = (v0 + v1) / 2
+    return jnp.sin(v0) + 7 * jnp.sin(v1) ** 2 + 0.1 * v2 ** 4 * jnp.sin(v0)
+
+def reward_2d_single_agent(
+    fsu: FleetStateInput,
+    ):
+    """Compute the reward of a fleet state based on a 2D landscape.
+
+    Args:
+        fsu: Fleet state input.
+    
+    Returns:
+        Reward.
+    """
+    return jnp.mean(jax.vmap(ishigami)(fsu.p.reshape(-1, fsu.p.shape[-1])))
+
 def input_effort(
     fsu: FleetStateInput,
     compensation: jnp.ndarray,

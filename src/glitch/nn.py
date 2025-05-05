@@ -32,7 +32,8 @@ class HardConstrainedMLP(nn.Module):
     ):
         """Call the NN."""
         x0 = jax.vmap(lambda x: x.flatten())(initial_states_batched)
-        x = (jax.vmap(lambda x: x.flatten())(final_states_batched) - x0).squeeze(-1)
+        # x = (jax.vmap(lambda x: x.flatten())(final_states_batched) - x0).squeeze(-1)
+        x = vmap_flatten(initial_states_batched, final_states_batched).squeeze(-1)
         for features in self.features_list:
             x = nn.Dense(features)(x)
             x = self.activation(x)
