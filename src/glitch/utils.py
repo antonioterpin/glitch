@@ -63,7 +63,7 @@ def load_configuration(file_path: str):
 class Logger:
     """Encapsulates logging functionalities."""
 
-    PROJECT_NAME = "fluids-estimation"
+    PROJECT_NAME = "glitch"
 
     def __init__(self, run_name: str) -> None:
         """Initializes the Logger and creates a new wandb run.
