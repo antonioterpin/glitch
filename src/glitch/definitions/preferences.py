@@ -9,6 +9,7 @@ from glitch.utils import JAX_DEBUG_JIT
 def input_effort(
     fsu: FleetStateInput,
     compensation: jnp.ndarray,
+    time_discretization: float,
 ) -> float:
     """Compute the input effort of a fleet state.
 
@@ -21,11 +22,11 @@ def input_effort(
     """
     if JAX_DEBUG_JIT:
         assert compensation.ndim == 1, "Compensation must be of shape (n_states,)"
-        assert fsu.p.shape[2] == compensation.shape[0], (
+        assert fsu.u.shape[2] == compensation.shape[0], (
             "Compensation must match robot state size"
         )
 
-    return jnp.linalg.norm((fsu.u + compensation[None, None, :]), axis=-1).mean()
+    return jnp.linalg.norm((fsu.u + compensation[None, None, :]), axis=-1).mean() * time_discretization
 
 def repulsion_loss(p, fn):
     # compute all pairwise differences: shape [R, C, C, D]
@@ -35,7 +36,7 @@ def repulsion_loss(p, fn):
     # build mask that is 0 on the diagonal (i==j), 1 elsewhere: shape [C, C]
     mask = 1.0 - jnp.eye(p.shape[1])
     # apply bump elementwise and sum over everything
-    return jnp.sum(fn(dists) * mask)
+    return jnp.mean(fn(dists) * mask)
 
 def collision_penalty_log(
     fsu: FleetStateInput,
@@ -84,6 +85,4 @@ def collision_penalty_bump(
         """
         return collision_penalty * jnp.exp(-d / normalization_factor)
     
-    l = repulsion_loss(fsu.p, bump).sum()
-    print(l)
-    return l
+    return repulsion_loss(fsu.p, bump).mean()

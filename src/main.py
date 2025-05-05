@@ -32,6 +32,7 @@ jax.config.update("jax_enable_x64", True)
 
 def build_batched_objective(config_hcnn, config_problem):
     collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
+    h = config_problem["h"]
     try:
         collision_penalty_fn = getattr(preferences, collision_penalty_fn_name)
     except AttributeError:
@@ -40,7 +41,7 @@ def build_batched_objective(config_hcnn, config_problem):
     
     def batched_objective(predictions):
         return (
-            preferences.input_effort(predictions, compensation) 
+            preferences.input_effort(predictions, compensation, h) 
             # + collision_penalty_fn(
             #     predictions, 
             #     config_hcnn["collision_penalty"], 
@@ -226,6 +227,8 @@ def train_hcnn(
 ):
     """Train the HCNN model."""
     eval_initial_states, eval_final_states = dataset_validation[0]
+    validation_loss = None
+    validation_cv = None
     with (
         GracefulShutdown("Stop detected, finishing epoch...") as g,
         Logger(run_name) as data_logger,
@@ -241,7 +244,6 @@ def train_hcnn(
                 final_states,
             )
             t = time.time() - t
-            pbar.set_description(f"Train Loss: {loss.mean():.5f}")
             data_logger.log(step, {
                 "loss": loss,
                 "batch_training_time": t,
@@ -249,14 +251,14 @@ def train_hcnn(
             })
 
             if step % eval_every == 0:
-                obj, cv, _ = eval_step(
+                validation_loss, validation_cv, _ = eval_step(
                     state, 
                     eval_initial_states, 
                     eval_final_states
                 )
                 data_logger.log(step, {
-                    "validation_objective": obj,
-                    "validation_constraint_violation": cv,
+                    "validation_objective": validation_loss,
+                    "validation_constraint_violation": validation_cv,
                 })
 
             if output_dir is not None and step % save_every == 0:
@@ -265,6 +267,11 @@ def train_hcnn(
                     output_dir,
                     f"{run_name}_{step}",
                 )
+
+            pbar.set_description(
+                f"Loss: {loss:.4f}, "
+                f"Validation Loss: {validation_loss:.4f}, "
+                f"Validation CV: {validation_cv:.4f}")
 
     return state
 

@@ -263,6 +263,12 @@ def get_constraints(
         n_states=n_states,
         n_robots=1, # We can decouple the constraints among the robots
     )
+    print(f"{A.shape=}")
+    print(f"{B.shape=}")
+    print(f"{A_initial_states.shape=}")
+    print(f"{A_final_states.shape=}")
+    print(f"{A_inputs.shape=}")
+    print(f"{A_dynamics_outputs.shape=}")
     A_eq = jnp.concatenate((
         A_initial_states,
         A_final_states,

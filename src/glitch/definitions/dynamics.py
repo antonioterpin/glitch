@@ -226,6 +226,17 @@ def get_dynamics(
         ], axis=1)
         for i in range(horizon)
     ], axis=0)
+
+    # Re-shuffle so that positions are first, velocities second
+    I = jnp.eye(n_states * n_robots)
+    O = jnp.zeros_like(I)
+    shuffle_matrix = jnp.concatenate((
+        jnp.kron(jnp.eye(horizon), jnp.block([[I, O]])),
+        jnp.kron(jnp.eye(horizon), jnp.block([[O, I]]))
+    ), axis=0)
+
+    A_horizon = shuffle_matrix @ A_horizon
+    B_horizon = shuffle_matrix @ B_horizon
     
     return A_horizon, B_horizon
 

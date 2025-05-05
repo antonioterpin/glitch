@@ -40,8 +40,8 @@ def plot_trajectory(
             color='red', linestyle='--', linewidth=2, label='Working Space Boundary')
 
     # Gradient parameters
-    v_min, v_max = 0.3, 0.8   # brightness range (0=black, 1=full color)
-    saturation = 0.8          # color saturation (0=gray, 1=full)
+    v_min, v_max = 0.5, 1.0   # brightness range (0=black, 1=full color)
+    saturation = 1.0          # color saturation (0=gray, 1=full)
 
     for i in range(n_robots):
         # Build a color for each time‐segment using HSV -> RGB
@@ -49,7 +49,7 @@ def plot_trajectory(
         # vary 'value' from v_min to v_max over time.
         hue = i / n_robots
         seg_colors = []
-        for t in range(horizon - 1):
+        for t in range(horizon):
             value = v_min + (v_max - v_min) * (t / (horizon - 1))
             rgb = colorsys.hsv_to_rgb(hue, saturation, value)
             seg_colors.append(rgb)

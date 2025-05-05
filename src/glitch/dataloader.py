@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from typing import Optional, List
 
-from glitch.configuration.random import sample_from_box
+from glitch.definitions.dynamics import FleetStateInput
 
 class TransitionsDataset():
     """Dataset for the transitions generation task."""
@@ -33,26 +33,48 @@ class TransitionsDataset():
         self.batch_size = batch_size
         self.keys = keys
         self.offset = offset
-        
-        initial_positions_box = jnp.concatenate((
-            -4.0 * jnp.ones((n_states, 1)),
-            -3.0 * jnp.ones((n_states, 1)),
-        ), axis=1)
-        final_positions_box = jnp.concatenate((
-            3.0 * jnp.ones((n_states, 1)),
-            4.0 * jnp.ones((n_states, 1)),
-        ), axis=1)
 
-        self.sample_initial_states = jax.vmap(
-            lambda k: sample_from_box(
-                k, initial_positions_box, n_robots, zero_velocity=True
-            )
-        )
-        self.sample_final_states = jax.vmap(
-            lambda k: sample_from_box(
-                k, final_positions_box, n_robots, zero_velocity=True
-            )
-        )
+        # TODO: allow customizing initial and terminal states
+        lb, ub = -4.0, 4.0
+        positions_y = jnp.linspace(lb, ub, n_robots)
+        positions_x = lb * jnp.ones((n_robots, 1))
+        positions_nominal = jnp.concatenate((positions_x, positions_y[:, None]), axis=1)
+        p = positions_nominal.reshape((1, n_robots, 2))
+        v = jax.numpy.zeros((1, n_robots, 2))
+        u = jax.numpy.zeros((0, n_robots, 2))
+        shift = jnp.array([ub - lb, 0.0])
+
+        def sample_initial_states(key):
+            return FleetStateInput(p=p, v=v, u=u)
+        
+        def sample_final_states(key):
+            pp = p + shift[None, None, :]
+            # shuffle the final positions
+            pp = jax.random.permutation(key, pp, axis=1)
+            return FleetStateInput(p=pp, v=v, u=u)
+        
+        self.sample_initial_states = jax.vmap(sample_initial_states)
+        self.sample_final_states = jax.vmap(sample_final_states)
+        
+        # initial_positions_box = jnp.concatenate((
+        #     -4.0 * jnp.ones((n_states, 1))
+        #     -3.0 * jnp.ones((n_states, 1)),
+        # ), axis=1)
+        # final_positions_box = jnp.concatenate((
+        #     3.0 * jnp.ones((n_states, 1)),
+        #     4.0 * jnp.ones((n_states, 1)),
+        # ), axis=1)
+
+        # self.sample_initial_states = jax.vmap(
+        #     lambda k: sample_from_box(
+        #         k, initial_positions_box, n_robots, zero_velocity=True
+        #     )
+        # )
+        # self.sample_final_states = jax.vmap(
+        #     lambda k: sample_from_box(
+        #         k, final_positions_box, n_robots, zero_velocity=True
+        #     )
+        # )
 
     def __len__(self):
         """Return the length of the dataset.

@@ -186,12 +186,6 @@ def test_get_dynamics_over_horizon_simple(h):
         # second agent position
         [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, h, 0.0],
         [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, h],
-        # first agent velocity
-        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-        # second agent velocity
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         # timestep 2
         # first agent position
         [1.0, 0.0, 0.0, 0.0, 2 * h, 0.0, 0.0, 0.0],
@@ -199,6 +193,14 @@ def test_get_dynamics_over_horizon_simple(h):
         # second agent position
         [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2 * h, 0.0],
         [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2 * h],
+        # timestep 1
+        # first agent velocity
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        # second agent velocity
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        # timestep 2
         # first agent velocity
         [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
@@ -214,12 +216,6 @@ def test_get_dynamics_over_horizon_simple(h):
         # second agent, position
         [0.0, 0.0, h ** 2 / 2, 0.0, 0.0, 0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, h ** 2 / 2, 0.0, 0.0, 0.0, 0.0],
-        # first agent velocity
-        [h, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, h, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        # second agent, velocity
-        [0.0, 0.0, h, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, h, 0.0, 0.0, 0.0, 0.0],
         # timestep 2
         # first agent, position
         [3 * h ** 2 / 2, 0.0, 0.0, 0.0, h ** 2 / 2, 0.0, 0.0, 0.0],
@@ -227,6 +223,14 @@ def test_get_dynamics_over_horizon_simple(h):
         # second agent, position
         [0.0, 0.0, 3 * h ** 2 / 2, 0.0, 0.0, 0.0, h ** 2 / 2, 0.0],
         [0.0, 0.0, 0.0, 3 * h ** 2 / 2, 0.0, 0.0, 0.0, h ** 2 / 2],
+        # timestep 1
+        # first agent velocity
+        [h, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, h, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        # second agent, velocity
+        [0.0, 0.0, h, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, h, 0.0, 0.0, 0.0, 0.0],
+        # timestep 2
         # first agent, velocity
         [h, 0.0, 0.0, 0.0, h, 0.0, 0.0, 0.0],
         [0.0, h, 0.0, 0.0, 0.0, h, 0.0, 0.0],
@@ -487,10 +491,14 @@ def test_propagation_over_horizon(
 
     # Propagation over the horizon
     xks = A_horizon @ x + B_horizon @ u_flatten
+    ps = xks[:horizon * n_robots * n_dim]
+    vs = xks[horizon * n_robots * n_dim:]
     for i in range(horizon):
         xk = A @ xk + B @ u[i, ..., None]
         # Check the shape of the propagated state
-        xk_from_xks = xks[i * (2 * n_dim * n_robots):(i + 1) * (2 * n_dim * n_robots)]
+        pk_from_ps = ps[i * n_dim * n_robots:(i + 1) * n_dim * n_robots]
+        vk_from_vs = vs[i * n_dim * n_robots:(i + 1) * n_dim * n_robots]
+        xk_from_xks = jnp.concatenate((pk_from_ps, vk_from_vs), axis=0)
         assert xk.shape == xk_from_xks.shape, (
             f"Propagated state does not match expected shape. "
             f"Expected:\n{xk_from_xks.shape}, got:\n{xk.shape}"
@@ -500,6 +508,32 @@ def test_propagation_over_horizon(
             f"Propagated state does not match expected values. "
             f"Expected:\n{xk_from_xks}, got:\n{xk}"
         )
+
+    # check the same results are compatible with the flattening and unflattening
+    p0 = x[:n_robots * n_dim, :]
+    v0 = x[n_robots * n_dim:, :]
+    ps_all = jnp.concatenate((p0, ps), axis=0)
+    vs_all = jnp.concatenate((v0, vs), axis=0)
+    x_all = jnp.concatenate((ps_all, vs_all, u_flatten), axis=0)
+    fsu = FleetStateInput(
+        v = jnp.zeros((horizon + 1, n_robots, n_dim)),
+        p = jnp.zeros((horizon + 1, n_robots, n_dim)),
+        u = jnp.zeros((horizon, n_robots, n_dim))
+    )
+    fsu = fsu.unpack(x_all)
+    xk = x
+    for i in range(horizon):
+        xk = A @ xk + B @ u[i, ..., None]
+        fs = FleetStateInput(
+            v = fsu.v[i + 1, ...][None, ...],
+            p = fsu.p[i + 1, ...][None, ...],
+            u = jnp.zeros((0, n_robots, n_dim))
+        )
+        assert jnp.allclose(xk, fs.flatten()), (
+            f"Propagated state does not match expected values. "
+            f"Expected:\n{fs.flatten()}, got:\n{xk}"
+        )
+        
 
 # ----------------------------------------------------------------------------
 # FleetStateInput masks

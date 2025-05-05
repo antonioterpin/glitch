@@ -8,6 +8,7 @@ from hcnn.project import Project
 
 from glitch.utils import logger
 from glitch.definitions.dynamics import FleetStateInput
+from glitch.definitions.dynamics import get_dynamics
 
 class HardConstrainedMLP(nn.Module):
     """Simple MLP with hard constraints on the output."""
@@ -30,13 +31,43 @@ class HardConstrainedMLP(nn.Module):
         raw=False
     ):
         """Call the NN."""
-        x = vmap_flatten(initial_states_batched, final_states_batched).squeeze(-1)
+        x0 = jax.vmap(lambda x: x.flatten())(initial_states_batched)
+        x = (jax.vmap(lambda x: x.flatten())(final_states_batched) - x0).squeeze(-1)
         for features in self.features_list:
             x = nn.Dense(features)(x)
             x = self.activation(x)
-        # TODO: allow the projection to be coupled
-        x = nn.Dense(self.project.dim * self.fsu.n_robots)(x)
-        x = jax.vmap(self.fsu.unpack)(x)
+        # The output of the MLP are the inputs
+        n_inputs = self.fsu.n_states * self.fsu.n_robots * self.fsu.horizon
+        u = nn.Dense(n_inputs)(x)[..., None]
+        A, B = get_dynamics(
+            horizon=self.fsu.horizon,
+            n_robots=self.fsu.n_robots,
+            n_states=self.fsu.n_states,
+            h=0.5,
+        )
+        x_all = jax.vmap(lambda _x, _u: A @ _x + B @ _u)(x0, u)
+        p_dim = self.fsu.n_states * self.fsu.n_robots * self.fsu.horizon
+        p_all = x_all[:, :p_dim, :]
+        v_all = x_all[:, p_dim:, :]
+        p0 = x0[:, :self.fsu.n_states * self.fsu.n_robots, :]
+        v0 = x0[:, self.fsu.n_states * self.fsu.n_robots:, :]
+        print(f"{A.shape=}")
+        print(f"{B.shape=}")
+        print(f"{x_all.shape=}")
+        print(f"{u.shape=}")
+        print(f"{x0.shape=}")
+        print(f"{p0.shape=}")
+        print(f"{v0.shape=}")
+        p_all = jnp.concatenate((p0, p_all), axis=(1))
+        v_all = jnp.concatenate((v0, v_all), axis=(1))
+        print(f"{p_all.shape=}")
+        print(f"{v_all.shape=}")
+        x_all = jnp.concatenate((p_all, v_all, u), axis=1)
+        x = jax.vmap(lambda _x: self.fsu.unpack(_x))(x_all)
+
+        # # TODO: allow the projection to be coupled
+        # x = nn.Dense(self.project.dim * self.fsu.n_robots)(x)
+        # x = jax.vmap(self.fsu.unpack)(x)
         if not raw:
             n_eq = self.project.eq_constraint.n_constraints
             batch_size = initial_states_batched.p.shape[0]
@@ -69,8 +100,6 @@ class HardConstrainedMLP(nn.Module):
                     n_iter_bwd=n_iter_bwd,
                     fpi=self.fpi,
                 )[0]
-            self.project.eq_constraint.b = b
-            cv = self.project.eq_constraint.cv(x[..., None]).mean()
             
             # we need to undo the rebatching
             x = projection_layer_format_to_predictions(
@@ -189,6 +218,7 @@ def vmap_flatten(x_batched, y_batched):
     )
 
 def predictions_to_projection_layer_format(x):
+    print(f"predictions shape {x.p.shape=}")
     # x is now shape (batch_size, horizon(+1), n_robots, n_states),
     # we reshape it as for b1
     # x_list is (batch_size, n_robots, horizon(+1) * n_states, 1)
@@ -205,6 +235,7 @@ def predictions_to_projection_layer_format(x):
     # x is now shape (batch_size * n_robots, horizon(+1) * n_states, 1)
     x = jnp.concatenate(x_list, axis=0)
     x = x.squeeze(-1) # remove last dimension to fit the projection layer
+    print(f"prediction layer format {x.shape=}")
     return x
 
 def projection_layer_format_to_predictions(x, batch_size, n_robots, horizon, n_states):
