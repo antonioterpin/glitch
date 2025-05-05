@@ -51,17 +51,8 @@ class HardConstrainedMLP(nn.Module):
         v_all = x_all[:, p_dim:, :]
         p0 = x0[:, :self.fsu.n_states * self.fsu.n_robots, :]
         v0 = x0[:, self.fsu.n_states * self.fsu.n_robots:, :]
-        print(f"{A.shape=}")
-        print(f"{B.shape=}")
-        print(f"{x_all.shape=}")
-        print(f"{u.shape=}")
-        print(f"{x0.shape=}")
-        print(f"{p0.shape=}")
-        print(f"{v0.shape=}")
         p_all = jnp.concatenate((p0, p_all), axis=(1))
         v_all = jnp.concatenate((v0, v_all), axis=(1))
-        print(f"{p_all.shape=}")
-        print(f"{v_all.shape=}")
         x_all = jnp.concatenate((p_all, v_all, u), axis=1)
         x = jax.vmap(lambda _x: self.fsu.unpack(_x))(x_all)
 
@@ -218,7 +209,6 @@ def vmap_flatten(x_batched, y_batched):
     )
 
 def predictions_to_projection_layer_format(x):
-    print(f"predictions shape {x.p.shape=}")
     # x is now shape (batch_size, horizon(+1), n_robots, n_states),
     # we reshape it as for b1
     # x_list is (batch_size, n_robots, horizon(+1) * n_states, 1)
@@ -235,7 +225,6 @@ def predictions_to_projection_layer_format(x):
     # x is now shape (batch_size * n_robots, horizon(+1) * n_states, 1)
     x = jnp.concatenate(x_list, axis=0)
     x = x.squeeze(-1) # remove last dimension to fit the projection layer
-    print(f"prediction layer format {x.shape=}")
     return x
 
 def projection_layer_format_to_predictions(x, batch_size, n_robots, horizon, n_states):
