@@ -52,11 +52,6 @@ def build_batched_objective(config_hcnn, config_problem):
                 config_problem["constraints"]["working_space"]["lower_bound"],
                 config_problem["constraints"]["working_space"]["upper_bound"],
             )
-            # + collision_penalty_fn(
-            #     predictions, 
-            #     config_hcnn["collision_penalty"], 
-            #     config_hcnn["collision_normalization_factor"]
-            # )
         )
     return jax.vmap(batched_objective)
 
