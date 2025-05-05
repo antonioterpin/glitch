@@ -1,7 +1,10 @@
-name: single_robot
+name: fleet
 
 problem:
-  n_robots: 25
+  input_effort: 1.0
+  fleet_preference: 0.0 # -1.0
+  agent_preference: 0.0 # 0.05
+  n_robots: 5
   n_states: 2 # NOTE: at the moment, only 2D is supported
   horizon: 25 # plan over horizon * h seconds
   h: 0.25 # time step of the optimization, the control is finer

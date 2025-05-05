@@ -38,14 +38,16 @@ def build_batched_objective(config_hcnn, config_problem):
     except AttributeError:
         raise ValueError(f"Unknown collision penalty '{collision_penalty_fn_name}'")
     compensation = jnp.array(config_problem["gravity"])
-    
+    input_effort = config_problem["input_effort"]
+    fleet_preference = config_problem["fleet_preference"]
+    agent_preference = config_problem["agent_preference"]
     def batched_objective(predictions, initial_states, final_states):
         return (
-            preferences.input_effort(predictions, compensation, h) 
+            input_effort * preferences.input_effort(predictions, compensation, h) 
             +
-            0.05 * preferences.reward_2d_single_agent(predictions)
+            agent_preference * preferences.reward_2d_single_agent(predictions)
             +
-            -preferences.coverage(
+            fleet_preference * preferences.coverage(
                 predictions,
                 config_problem["constraints"]["working_space"]["lower_bound"],
                 config_problem["constraints"]["working_space"]["upper_bound"],
