@@ -25,7 +25,7 @@ def input_effort(
             "Compensation must match robot state size"
         )
 
-    return jnp.sum((fsu.u + compensation[None, None, :]) ** 2)
+    return jnp.linalg.norm((fsu.u + compensation[None, None, :]), axis=-1).mean()
 
 def collision_penalty_log(
     fsu: FleetStateInput,

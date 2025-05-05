@@ -3,14 +3,16 @@ import datetime
 import os
 import time
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from tqdm import tqdm
 import optax
 from flax.training import train_state
-from hcnn.project import Project
+import matplotlib.pyplot as plt
 
+from glitch.plotting import plot_trajectory
 from glitch.definitions.constraints import get_constraints
 from glitch.nn import (
     HardConstrainedMLP, 
@@ -22,6 +24,8 @@ from glitch.nn import (
 from glitch.dataloader import TransitionsDataset, create_dataloaders as load_dataset
 from glitch.utils import load_configuration, GracefulShutdown, Logger
 import glitch.definitions.preferences as preferences
+from glitch.utils import logger
+
 
 jax.config.update("jax_enable_x64", True)
 
@@ -34,14 +38,13 @@ def build_batched_objective(config_hcnn, config_problem):
     compensation = jnp.array(config_problem["gravity"])
     
     def batched_objective(predictions):
-        return jnp.sum(predictions.p ** 2)
         return (
             preferences.input_effort(predictions, compensation) 
-            + collision_penalty_fn(
-                predictions, 
-                config_hcnn["collision_penalty"], 
-                config_hcnn["collision_normalization_factor"]
-            )
+            # + collision_penalty_fn(
+            #     predictions, 
+            #     config_hcnn["collision_penalty"], 
+            #     config_hcnn["collision_normalization_factor"]
+            # )
         )
     return jax.vmap(batched_objective)
 
@@ -93,7 +96,7 @@ def build_steps(project, config_hcnn, config_problem):
         project.eq_constraint.b = b
         cv = project.cv(x).mean()
 
-        return accuracy, cv
+        return accuracy, cv, predictions
     return jax.jit(train_step), jax.jit(eval_step)
 
 def load_hcnn(project, config_hcnn, config_problem):
@@ -171,12 +174,6 @@ def argument_parser():
     )
 
     parser.add_argument(
-        "--save-results",
-        action="store_true",
-        help="Save the results.",
-    )
-
-    parser.add_argument(
         "--train",
         action="store_true",
         help="Train the model.",
@@ -185,7 +182,7 @@ def argument_parser():
     parser.add_argument(
         "--save-every",
         type=int,
-        default=1,
+        default=0,
         help="Save the model every save_every training batches.",
     )
 
@@ -196,32 +193,33 @@ def argument_parser():
         help="Evaluate the model every eval_every training batches.",
     )
 
+    parser.add_argument(
+        "--plot-trajectory",
+        type=int,
+        nargs="+",
+        help="Plot the trajectories with the given indices.",
+    )
+
     args = parser.parse_args()
 
     return args
 
 def train_hcnn(
-    projection_layer: Project,
+    train_step: callable,
+    eval_step: callable,
     state: train_state.TrainState,
     dataset_training: TransitionsDataset,
     dataset_validation: TransitionsDataset,
     save_every: int,
     eval_every: int,
     output_dir: str,
-    config_hcnn: dict,
-    config_problem: dict,
+    run_name: str,
 ):
     """Train the HCNN model."""
     eval_initial_states, eval_final_states = dataset_validation[0]
-    train_step, eval_step = build_steps(
-        project=projection_layer,
-        config_hcnn=config_hcnn,
-        config_problem=config_problem,
-    )
-    model_name = config_hcnn["model_name"]
     with (
         GracefulShutdown("Stop detected, finishing epoch...") as g,
-        Logger(f"training-{model_name}") as data_logger,
+        Logger(run_name) as data_logger,
     ):
         for step in (pbar := tqdm(range(len(dataset_training)))):
             if g.stop:
@@ -241,22 +239,24 @@ def train_hcnn(
             })
 
             if step % eval_every == 0:
-                obj, cv = eval_step(
+                obj, cv, _ = eval_step(
                     state, 
                     eval_initial_states, 
                     eval_final_states
                 )
                 data_logger.log(step, {
-                    "eval_objective": obj,
-                    "eval_constraint_violation": cv,
+                    "validation_objective": obj,
+                    "validation_constraint_violation": cv,
                 })
 
             if output_dir is not None and step % save_every == 0:
                 save_model(
                     state.params,
                     output_dir,
-                    f"{model_name}_{step}",
+                    f"{run_name}_{step}",
                 )
+
+    return state
 
 
 if __name__ == "__main__":
@@ -317,31 +317,77 @@ if __name__ == "__main__":
         tx=optax.adam(config_hcnn["learning_rate"]),
     )
     
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = None
-    if args.save_results:
+    if args.save_every > 0:
         # Create the output directory if it doesn't exist
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = args.output_dir.format(timestamp=timestamp)
         os.makedirs(output_dir, exist_ok=True)
         print(f"Results will be saved in: {output_dir}")
 
+    train_step, eval_step = build_steps(
+        project=hcnn.project,
+        config_hcnn=config_hcnn,
+        config_problem=config_dataset["problem"],
+    )
+
+    run_name = f"{config_hcnn['name']}_{config_dataset['name']}_{timestamp}"
+
     if args.train > 0:
         training_time_start = time.time()
-        train_hcnn(
-            projection_layer=hcnn.project,
+        state = train_hcnn(
+            train_step=train_step,
+            eval_step=eval_step,
             state=state,
             dataset_training=dataset_training,
             dataset_validation=dataset_validation,
             save_every=args.save_every,
             eval_every=args.eval_every,
             output_dir=output_dir,
-            config_hcnn=config_hcnn,
-            config_problem=config_dataset["problem"],
+            run_name=run_name,
         )
         training_time = time.time() - training_time_start
         print(f"Training time: {training_time:.5f} seconds")
 
     # Evaluate the (trained) model on the test set
-    raise NotImplementedError(
-        "Evaluation is not implemented yet."
-    )
+    eval_initial_states, eval_final_states = dataset_test[0]
+    with (
+        Logger(run_name) as data_logger,
+    ):
+        obj, cv, predictions = eval_step(
+            state, 
+            eval_initial_states, 
+            eval_final_states
+        )
+        data_logger.log(0, {
+            "evaluation_objective": obj,
+            "evaluation_constraint_violation": cv,
+        })
+        if len(args.plot_trajectory) > 0:
+            working_space = config_dataset["problem"]["constraints"]["working_space"]
+            for idx in args.plot_trajectory:
+                if idx >= predictions.p.shape[0]:
+                    logger.warning(
+                        f"Index {idx} is out of bounds."
+                    )
+                    continue
+                # Plot the trajectory
+                fig, ax = plot_trajectory(
+                    trajectories=np.asarray(predictions.p[idx, :, :, :2]),
+                    working_space=(
+                        working_space["lower_bound"],
+                        working_space["lower_bound"],
+                        working_space["upper_bound"],
+                        working_space["upper_bound"],
+                    ),
+                    initial_positions=np.asarray(eval_initial_states.p[idx, 0, :, :2]),
+                    final_positions=np.asarray(eval_final_states.p[idx, 0, :, :2]),
+                    title=f"Evaluation trajectory {idx}",
+                )
+                # fictitiously save the figure for different steps so that wandb
+                # renders a slider
+                data_logger.log_figure(
+                    fig=fig,
+                    key=f"evaluation_trajectories",
+                )
+                plt.close(fig)
