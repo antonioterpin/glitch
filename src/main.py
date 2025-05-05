@@ -44,6 +44,14 @@ def build_batched_objective(config_hcnn, config_problem):
             preferences.input_effort(predictions, compensation, h) 
             +
             0.05 * preferences.reward_2d_single_agent(predictions)
+            +
+            -preferences.coverage(
+                predictions,
+                config_problem["constraints"]["working_space"]["lower_bound"],
+                config_problem["constraints"]["working_space"]["upper_bound"],
+                config_problem["constraints"]["working_space"]["lower_bound"],
+                config_problem["constraints"]["working_space"]["upper_bound"],
+            )
             # + collision_penalty_fn(
             #     predictions, 
             #     config_hcnn["collision_penalty"], 
@@ -225,6 +233,8 @@ def train_hcnn(
     eval_initial_states, eval_final_states = dataset_validation[0]
     validation_loss = None
     validation_cv = None
+    get_next = jax.jit(lambda step: dataset_training[step])
+    n_steps = 0
     with (
         GracefulShutdown("Stop detected, finishing epoch...") as g,
         Logger(run_name) as data_logger,
@@ -232,7 +242,7 @@ def train_hcnn(
         for step in (pbar := tqdm(range(len(dataset_training)))):
             if g.stop:
                 break
-            initial_states, final_states = dataset_training[step]
+            initial_states, final_states = get_next(step)
             t = time.time()
             loss, state, grad_norm = train_step(
                 state, 
@@ -269,8 +279,10 @@ def train_hcnn(
                 f"Validation Loss: {validation_loss:.4f}, "
                 f"Validation CV: {validation_cv:.4f}, "
                 f"Grad Norm: {grad_norm:.4f}.")
+            
+            n_steps += 1
 
-    return state
+    return state, n_steps
 
 
 if __name__ == "__main__":
@@ -347,9 +359,10 @@ if __name__ == "__main__":
 
     run_name = f"{config_hcnn['name']}_{config_dataset['name']}_{timestamp}"
 
+    step = 0
     if args.train > 0:
         training_time_start = time.time()
-        state = train_hcnn(
+        state, step = train_hcnn(
             train_step=train_step,
             eval_step=eval_step,
             state=state,
@@ -403,5 +416,6 @@ if __name__ == "__main__":
                 data_logger.log_figure(
                     fig=fig,
                     key=f"evaluation_trajectories",
+                    t=step + idx,
                 )
                 plt.close(fig)

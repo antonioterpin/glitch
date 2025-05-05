@@ -144,9 +144,7 @@ class Logger:
             t (int): An indexing parameter (for example, the epoch).
             data (Dict[str, Any]): A dictionary of variable names and values to log.
         """
-        # Add the integer parameter to the log data.
-        data["t"] = t
-        wandb.log(data)
+        wandb.log(data, step=t)
 
     def timeit(
         self,

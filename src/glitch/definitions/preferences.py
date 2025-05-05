@@ -2,33 +2,68 @@
 
 import jax
 import jax.numpy as jnp
+from typing import Tuple
 
 from glitch.definitions.dynamics import FleetStateInput
 from glitch.utils import JAX_DEBUG_JIT
 
 def coverage(
-    fsu: FleetStateInput,
-    coverage_radius: float,
+    fsu,
     min_x: float,
     max_x: float,
     min_y: float,
     max_y: float,
-    pixels_per_meter: int,
+    image_shape: Tuple[int, int] = (16, 16),
+    sigma_x: float = 1.0,
+    sigma_y: float = 1.0,
+    rho: float = 0.0,
+    amplitude: float = 200.0,
 ) -> float:
-    """Compute the coverage of a fleet state.
-
-    Args:
-        fsu: Fleet state input.
-        coverage_radius: Coverage radius.
-        min_x: Minimum x coordinate.
-        max_x: Maximum x coordinate.
-        min_y: Minimum y coordinate.
-        max_y: Maximum y coordinate.
-        pixels_per_meter: Pixels per meter.
-
-    Returns:
-        Coverage.
     """
+    Differentiable coverage: place continuous Gaussians at each (possibly fractional)
+    position, sum their contributions, and normalize.
+    """
+    H, W = image_shape
+
+    # flatten positions to shape (N, 2)
+    positions = fsu.p.reshape(-1, fsu.p.shape[-1])
+
+    # map world coords -> pixel coords (still float)
+    xp_x = jnp.array([min_x, max_x])
+    fp_x = jnp.array([0, W])
+    xp_y = jnp.array([min_y, max_y])
+    fp_y = jnp.array([0, H])
+
+    px = jnp.interp(positions[:, 0], xp_x, fp_x)
+    py = jnp.interp(positions[:, 1], xp_y, fp_y)
+    # stack as (N,2) with [y, x] for consistency
+    centers = jnp.stack([py, px], axis=-1)
+
+    # build pixel grid
+    ys = jnp.arange(H)
+    xs = jnp.arange(W)
+    Y, X = jnp.meshgrid(ys, xs, indexing='ij')  # both shape (H, W)
+
+    # expand dims to broadcast: (N, 1, 1)
+    cy = centers[:, 0][:, None, None]
+    cx = centers[:, 1][:, None, None]
+
+    dx = X[None, :, :] - cx
+    dy = Y[None, :, :] - cy
+
+    one_minus_rho2 = 1.0 - rho**2
+    # Mahalanobis‐like exponent
+    z = (dx**2 / sigma_x**2) + (dy**2 / sigma_y**2) - (2 * rho * dx * dy) / (sigma_x * sigma_y)
+    exponent = -z / (2 * one_minus_rho2)
+
+    # each kernel: shape (N, H, W)
+    kernels = amplitude * jnp.exp(exponent)
+
+    # sum over particles -> image
+    image = jnp.sum(kernels, axis=0)
+    image = jnp.clip(image, 0, 255)
+    coverage = jnp.sum(image / 255.0) / (H * W)
+    return coverage
     
     
 
