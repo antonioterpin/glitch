@@ -23,7 +23,7 @@ setup(
         "torch>=2.7.0",
         "colorama>=0.4.6",
         "wandb",
-        "hcnn @ git+ssh://git@github.com/antonioterpin/hcnn.git@feat-autotuning",
+        "hcnn @ git+ssh://git@github.com/antonioterpin/hcnn.git",
     ],
     extras_require={
         "dev": [
