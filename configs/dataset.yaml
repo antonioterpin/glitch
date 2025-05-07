@@ -1,8 +1,8 @@
 name: fleet
 
 problem:
-  input_effort: 1.0
-  fleet_preference: 0.0 # -1.0
+  input_effort: 0.0 # 1.0
+  fleet_preference: -1.0 # -1.0
   agent_preference: 0.0 # 0.05
   n_robots: 5
   n_states: 2 # NOTE: at the moment, only 2D is supported

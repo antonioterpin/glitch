@@ -387,7 +387,7 @@ if __name__ == "__main__":
             "evaluation_objective": obj,
             "evaluation_constraint_violation": cv,
         })
-        if len(args.plot_trajectory) > 0:
+        if args.plot_trajectory and len(args.plot_trajectory) > 0:
             working_space = config_dataset["problem"]["constraints"]["working_space"]
             for idx in args.plot_trajectory:
                 if idx >= predictions.p.shape[0]:
