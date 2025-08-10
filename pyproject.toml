@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glitch"
+version = "1.0.0"
+description = "Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But this repo contains code for conditional generation of transitions for swarm of robots."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Antonio Terpin", email = "aterpin@ethz.ch" },
+]
+urls = { Homepage = "https://github.com/antonioterpin/glitch" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+# Core dependencies
+dependencies = [
+    "pinet @ git+ssh://git@github.com/antonioterpin/pinet.git@feat-readme",
+    "numpy<2"
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+dev = [
+    "snowballstemmer==2.2.0",
+    "pre_commit==4.0.1",
+    "pytest-cov",
+    "tomli"
+]
+cuda12 = [
+    "pinet[cuda12] @ git+ssh://git@github.com/antonioterpin/pinet.git@feat-readme",
+]
+
+# Build system configuration
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pinet*"]
