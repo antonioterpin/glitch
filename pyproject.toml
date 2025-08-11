@@ -20,7 +20,7 @@ classifiers = [
 
 # Core dependencies
 dependencies = [
-    "pinet @ git+ssh://git@github.com/antonioterpin/pinet.git@hotfix-cv-lifted-variable-b",
+    "pinet-hcnn",
     "numpy<2"
 ]
 

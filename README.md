@@ -2,7 +2,7 @@
 GLITCH stands for Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But this repo contains code for conditional generation of transitions for swarm of robots, showcasing an application of &Pi;net.
 
 [![arXiv](https://img.shields.io/badge/arXiv-TODO-b31b1b?style=flat&logo=arxiv&logoColor=white)](https://arxiv.org/abs/TODO)
-![View Repo](https://img.shields.io/badge/GitHub-antonioterpin%2Fpinet-blue?logo=github)
+[![View Repo](https://img.shields.io/badge/GitHub-antonioterpin%2Fpinet-blue?logo=github)](https://github.com/antonioterpin/pinet)
 
 We use &Pi;net to synthesize transition trajectories between multi-vehicle configurations that optimize some non-linear, *fleet-level* objective subject to dynamics, state and input constraints. We feed a neural network with the initial and terminal fleet configurations (the context $\mathrm{x}$), obtain the raw input trajectories and use the vehicle dynamics to infer the full state-input trajectories that serves as the raw output $y_{\text{raw}}$, which are then projected for ensured constraint satisfaction.
 
