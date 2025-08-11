@@ -3,12 +3,11 @@
 
 - [Development workflow](#development-workflow)
 - [Testing a feature](#testing-a-feature)
-- [Code organization](#code-organization)
 - [Preparing for a PR](#preparing-for-a-pr)
 We will use [conda](https://conda.io/en/latest/user-guide/install/) to handle the virtual environment for development.
 ```sh
-conda create -n hcnn python=3.10
-conda activate hcnn
+conda create -n glitch python=3.12
+conda activate glitch
 ```
 
 To install the requirements, run:
@@ -82,12 +81,6 @@ To run the tests,
 ```bash
 PYTHONPATH=src pytest
 ```
-
-### Code organization
-We structure the codebase as follows:
-- `src/hcnn/` contains the different features of the project.
-- `src/hcnn/flax_project.py` contains the `nn.Module` extension to include the project as part of the [flax](https://flax.readthedocs.io) library.
-- `src/test/` contains the tests.
 
 ### Preparing for a PR
 Before opening a PR to `dev`, you need to `squash` your commits into a single one. First, review your commit history to identify how many commits need to be squashed:
