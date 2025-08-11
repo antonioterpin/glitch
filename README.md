@@ -4,7 +4,7 @@ Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But 
 ## Installation
 We will use [conda](https://conda.io/en/latest/user-guide/install/) to handle the virtual environment.
 ```bash
-conda create -n glitch python=3.11
+conda create -n glitch python=3.12
 conda activate glitch
 pip install pip --upgrade
 ```

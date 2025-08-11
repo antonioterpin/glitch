@@ -2,8 +2,8 @@ import jax
 import jax.numpy as jnp
 from typing import Optional, List
 
-from glitch.definitions.dynamics import FleetStateInput
 from glitch.configuration.random import sample_from_line, sample_from_circle
+from glitch.definitions.preferences import context_generation
 
 class TransitionsDataset():
     """Dataset for the transitions generation task."""
@@ -14,6 +14,7 @@ class TransitionsDataset():
             horizon: int,
             batch_size: int,
             keys: Optional[List[int]] = None,
+            contextual_coverage: bool = False,
             offset: int = 0):
         """Initialize the dataset.
 
@@ -29,7 +30,7 @@ class TransitionsDataset():
         """
         super().__init__()
 
-        if n_states > 2:
+        if n_states != 2:
             raise ValueError("n_states must be 2 for the transitions dataset.")
 
         self.n_states = n_states
@@ -38,6 +39,7 @@ class TransitionsDataset():
         self.batch_size = batch_size
         self.keys = keys
         self.offset = offset
+        self.contextual_coverage = contextual_coverage
 
         def sample_initial_states_from_line(key):
             key_p1, key_p2x, key_p2y, key_line = jax.random.split(key, 4)
@@ -86,10 +88,26 @@ class TransitionsDataset():
             idx = jax.random.randint(key_idx, (), 0, len(fns))
             # dispatch
             return jax.lax.switch(idx, fns, key_fn)
-            
         
         self.sample_initial_states = jax.vmap(sample_initial_states)
         self.sample_final_states = jax.vmap(sample_final_states)
+
+        if self.contextual_coverage:
+            self.resolution = 64 # 1024
+            # meshgrid for the 2D landscape
+            X, Y = jnp.meshgrid(
+                jnp.linspace(-5, 5, self.resolution), 
+                jnp.linspace(-5, 5, self.resolution)
+            )
+            # save X, Y as points (N, 2)
+            self.points = jnp.stack((X.flatten(), Y.flatten()), axis=-1)
+
+            def sample_context(key):
+                """Sample a context for the coverage task."""
+                return context_generation(key, self.points).reshape(
+                    self.resolution, self.resolution, 1)
+
+            self.sample_context = jax.vmap(sample_context)
     
 
     def __len__(self):
@@ -114,11 +132,19 @@ class TransitionsDataset():
         # Note: this way offset mantains the same behavior in both cases
         idx = idx if self.keys is None else self.keys[idx]
         key = jax.random.PRNGKey(idx + self.offset)
-        keyi, keyf = jax.random.split(key)
+        keyi, keyf, keyc = jax.random.split(key, 3)
         keysi = jax.random.split(keyi, self.batch_size)
         keysf = jax.random.split(keyf, self.batch_size)
+        context = None
+        if self.contextual_coverage:
+            keys_context = jax.random.split(keyc, self.batch_size)
+            context = self.sample_context(keys_context)
 
-        return self.sample_initial_states(keysi), self.sample_final_states(keysf)
+        return (
+            self.sample_initial_states(keysi), 
+            self.sample_final_states(keysf),
+            context
+        )
 
 
 def create_dataloaders(config):
@@ -138,6 +164,8 @@ def create_dataloaders(config):
     val_size = config["dataset"].get("val_size", 32)
     test_size = config["dataset"].get("test_size", 32)
 
+    # Use contextual coverage if specified in the config
+    contextual_coverage = config["problem"].get("contextual_coverage", False)
 
     dataset_validation = TransitionsDataset(
         keys=[0],
@@ -145,7 +173,8 @@ def create_dataloaders(config):
         n_robots=config["problem"]["n_robots"],
         horizon=config["problem"]["horizon"],
         batch_size=val_size,
-        offset=0
+        offset=0,
+        contextual_coverage=contextual_coverage
     )
     dataset_test = TransitionsDataset(
         keys=[1],
@@ -153,7 +182,8 @@ def create_dataloaders(config):
         n_robots=config["problem"]["n_robots"],
         horizon=config["problem"]["horizon"],
         batch_size=test_size,
-        offset=0
+        offset=0,
+        contextual_coverage=contextual_coverage
     )
     dataset_train = TransitionsDataset(
         keys=None if dataset_size < 0 else jnp.arange(dataset_size),
@@ -162,6 +192,7 @@ def create_dataloaders(config):
         n_states=config["problem"]["n_states"],
         n_robots=config["problem"]["n_robots"],
         horizon=config["problem"]["horizon"],
+        contextual_coverage=contextual_coverage
     )
     
     return dataset_train, dataset_validation, dataset_test

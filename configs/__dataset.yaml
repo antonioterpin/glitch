@@ -1,0 +1,37 @@
+name: fleet
+
+problem:
+  input_effort: 0.0 # 1.0
+  fleet_preference: 0.0 # -1.0
+  agent_preference: 1.0 # 0.05
+  contextual_coverage: True # False -> no context
+  n_robots: 1
+  n_states: 2 # NOTE: at the moment, only 2D is supported
+  horizon: 750 # 250 # plan over horizon * h seconds
+  h: 0.0083 # 0.025 # time step of the optimization, the control is finer
+  # TODO: if gravity is not zero, it should affect also the dynamics
+  gravity: [0, 0] # generalized gravity vector # -9.81
+  constraints:
+    working_space:
+      # 10x10x10 working space, as in FMA
+      # TODO: let this configurable compatibly with the other dataloader
+      lower_bound: -5.0
+      upper_bound: 5.0
+    velocity:
+      # m/s
+      lower_bound: -20.0
+      upper_bound: 20.0
+    acceleration:
+      # m/s^2
+      lower_bound: -5.0
+      upper_bound: 5.0
+    jerk:
+      # m/s^3
+      lower_bound: -1.5
+      upper_bound: 1.5
+
+dataset:
+  batch_size: 128
+  size: -1 # to generate indefinitely for training
+  val_size: 128
+  test_size: 128

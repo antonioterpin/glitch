@@ -2,6 +2,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 from jax import tree_util
+import time
+
 from glitch.definitions.dynamics import (
     FleetStateInput,
     get_dynamics,
@@ -12,7 +14,8 @@ from glitch.definitions.dynamics import (
     get_initial_states_extractor,
     get_final_states_extractor,
     get_input_extractor,
-    get_dynamics_outputs_extractor
+    get_dynamics_outputs_extractor,
+    get_dynamics_fast,
 )
 from glitch.utils import JAX_DEBUG_JIT
 
@@ -903,4 +906,26 @@ def test_jerk_matrix(n_robots, n_dim, horizon, h):
     assert jnp.allclose(J, input_differences), (
         f"Jerk matrix does not match expected values. "
         f"Expected:\n{input_differences}, got:\n{J}"
+    )
+
+@pytest.mark.parametrize("horizon", [10, 100, 500, 1000, 2500])
+def test_get_dynamics_speed(horizon: int):
+    n_states = 2
+    n_robots = 1
+    h = 0.1
+
+    def fn():
+        return get_dynamics_fast(horizon, n_robots, n_states, h)
+    fn_jit = jax.jit(fn)
+    A_jit, B_jit = fn_jit()
+
+    # Ensure we wait for any device work (important when a GPU is involved)
+    t0 = time.perf_counter()
+    N = 100
+    for _ in range(N):
+        A_jit, B_jit = fn_jit()
+    elapsed = (time.perf_counter() - t0) / N
+
+    assert elapsed < 0.0005, (
+        f"[get_dynamics_fast] H={horizon:<4d}: {elapsed * 1e3:>8.1f} ms"
     )

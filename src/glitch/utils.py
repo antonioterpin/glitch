@@ -65,7 +65,7 @@ class Logger:
 
     PROJECT_NAME = "glitch"
 
-    def __init__(self, run_name: str) -> None:
+    def __init__(self, run_name: str, config={}) -> None:
         """Initializes the Logger and creates a new wandb run.
 
         Args:
@@ -77,6 +77,7 @@ class Logger:
             project=self.PROJECT_NAME,
             name=self.run_name,
             id=self.run_name,
+            config=config,
             resume="allow")
 
     def __enter__(self) -> "Logger":

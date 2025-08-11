@@ -64,8 +64,7 @@ def coverage(
     image = jnp.clip(image, 0, 255)
     coverage = jnp.sum(image / 255.0) / (H * W)
     return coverage
-    
-    
+
 
 def ishigami(v: jnp.ndarray) -> jnp.ndarray:
     r"""
@@ -103,6 +102,56 @@ def reward_2d_single_agent(
         Reward.
     """
     return jnp.mean(jax.vmap(ishigami)(fsu.p.reshape(-1, fsu.p.shape[-1])))
+
+
+def _bilinear_interpolate(grid_vals, xs, ys, x_coords, y_coords):
+    dx = x_coords[1] - x_coords[0]
+    dy = y_coords[1] - y_coords[0]
+
+    ix = jnp.clip((xs - x_coords[0]) / dx, 0.0, x_coords.size - 1)
+    iy = jnp.clip((ys - y_coords[0]) / dy, 0.0, y_coords.size - 1)
+
+    i0x = ix.astype(jnp.int32)
+    i0y = iy.astype(jnp.int32)
+    i1x = jnp.clip(i0x + 1, 0, x_coords.size - 1)
+    i1y = jnp.clip(i0y + 1, 0, y_coords.size - 1)
+
+    fx = ix - i0x
+    fy = iy - i0y
+
+    v00 = grid_vals[i0y, i0x]
+    v10 = grid_vals[i0y, i1x]
+    v01 = grid_vals[i1y, i0x]
+    v11 = grid_vals[i1y, i1x]
+
+    return (
+        (1.0 - fx) * (1.0 - fy) * v00
+        + fx * (1.0 - fy) * v10
+        + (1.0 - fx) * fy * v01
+        + fx * fy * v11
+    )
+
+def reward_2d_single_agent_with_context(
+    fsu: FleetStateInput,
+    context: jax.Array,
+    x_coords: jnp.ndarray = jnp.linspace(-5, 5, 64), # 1024,
+    y_coords: jnp.ndarray = jnp.linspace(-5, 5, 64), # 1024
+    ):
+    """Compute the reward of a fleet state based on a 2D landscape with context.
+
+    Args:
+        fsu: Fleet state input.
+        context: Context for the coverage task.
+        x_coords: x-coordinates of the grid.
+        y_coords: y-coordinates of the grid.
+
+    Returns:
+        Reward.
+    """
+    positions = fsu.p.reshape(-1, fsu.p.shape[-1])
+    xs, ys = positions[:, 0], positions[:, 1]
+
+    return jnp.mean(_bilinear_interpolate(context, xs, ys, x_coords, y_coords))
 
 def input_effort(
     fsu: FleetStateInput,
@@ -184,3 +233,33 @@ def collision_penalty_bump(
         return collision_penalty * jnp.exp(-d / normalization_factor)
     
     return repulsion_loss(fsu.p, bump).mean()
+
+
+def context_generation(key: jax.random.PRNGKey, grid_points: jnp.ndarray) -> jax.Array:
+    """Generate a context for the fleet state.
+
+    Args:
+        key: Random key for JAX.
+        grid_points: Grid points for the context.
+
+    Returns:
+        jax.Array: Generated context.
+    """
+    PRESET_CENTRES = jnp.array([
+        [-2.5, -2.5],
+        [ 2.5, -2.5],
+        # [0, 0],
+        [-2.5,  2.5],
+        [ 2.5,  2.5],
+    ])
+
+    idx = jax.random.randint(key, shape=(), minval=0, maxval=PRESET_CENTRES.shape[0])
+    c0 = PRESET_CENTRES[idx]
+    amp = 1.0 
+    sigma = 3
+    two_s2 = 2 * sigma**2
+
+    def fn(x: jax.Array) -> jax.Array:
+        return amp * jnp.exp(-jnp.sum((x - c0) ** 2) / two_s2)
+
+    return jax.vmap(fn)(grid_points).reshape(-1, 1)

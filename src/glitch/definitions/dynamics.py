@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from dataclasses import dataclass
 from jax.tree_util import register_pytree_node_class
+from typing import Tuple
 
 from glitch.utils import JAX_DEBUG_JIT
 
@@ -200,6 +201,12 @@ def get_dynamics(
         n_states: Number of states.
         h: Time discretization.
     """
+    return get_dynamics_fast(
+        horizon=horizon,
+        n_robots=n_robots,
+        n_states=n_states,
+        h=h
+    )
 
     A = jnp.concatenate((
         jnp.concatenate((
@@ -239,6 +246,81 @@ def get_dynamics(
     B_horizon = shuffle_matrix @ B_horizon
     
     return A_horizon, B_horizon
+
+def get_dynamics_fast(
+    horizon: int,
+    n_robots: int,
+    n_states: int,
+    h: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Lifted dynamics matrices for a fleet of *decoupled* double-integrator robots.
+
+    Args:
+        horizon: Time horizon.
+        n_robots: Number of robots.
+        n_states: Number of states.
+        h: Time discretization.
+
+    Returns:
+        A_horizon: Lifted state matrix.
+        B_horizon: Lifted input matrix.
+    """
+    if horizon <= 0:
+        raise ValueError("`horizon` must be positive.")
+    if n_states <= 0 or n_robots <= 0:
+        raise ValueError("`n_states` and `n_robots` must be positive.")
+
+    N = n_states * n_robots # positions per time‑step
+    I_N = jnp.eye(N)
+
+    # Lifted state matrix A_horizon
+    k = jnp.arange(1, horizon + 1, dtype=jnp.float32)
+
+    A_pp = jnp.broadcast_to(I_N, (horizon, N, N))       # top‑left, shape (H,N,N)
+    A_pv = (h * k)[:, None, None] * I_N                 # top‑right, (H,N,N)
+    A_vv = A_pp                                         # bottom‑right
+
+    A_k = jnp.concatenate(
+        (
+            jnp.concatenate((A_pp, A_pv), axis=-1),                      # [[I, k·h·I]]
+            jnp.concatenate((jnp.zeros_like(A_pv), A_vv), axis=-1),      # [[0, I    ]]
+        ),
+        axis=-2,
+    )  # (H, 2N, 2N)
+
+    # Re‑order rows -> first all positions, then all velocities
+    A_horizon = jnp.concatenate(
+        (
+            A_k[:, :N, :].reshape(-1, 2 * N),
+            A_k[:, N:, :].reshape(-1, 2 * N),
+        ),
+        axis=0,
+    )
+
+    # Lifted input matrix B_horizon
+    idx = jnp.arange(horizon)
+    diff = (idx[:, None] - idx[None, :]).astype(jnp.float32)   # (H,H)
+    mask = diff >= 0
+
+    coef_top = ((diff + 0.5) * h * h) * mask            # (H,H)
+    coef_bot = (h * mask).astype(jnp.float32)            # (H,H)
+
+    B_top = jnp.kron(coef_top, I_N)          # (H·N, H·N)
+    B_bot = jnp.kron(coef_bot, I_N)          # (H·N, H·N)
+
+    B_step = jnp.empty((2 * horizon * N, horizon * N))
+    for t in range(horizon):
+        B_step = B_step.at[2*t*N : 2*t*N + N, :].set(B_top[t*N : (t+1)*N])
+        B_step = B_step.at[2*t*N + N : 2*t*N + 2*N, :].set(B_bot[t*N : (t+1)*N])
+
+    B_step_r = B_step.reshape(horizon, 2 * N, horizon * N)
+    B_horizon = jnp.vstack((
+        B_step_r[:, :N, :].reshape(-1, horizon * N),   # positions
+        B_step_r[:, N:,  :].reshape(-1, horizon * N)   # velocities
+    ))
+
+    return A_horizon, B_horizon
+
 
 def get_initial_states_extractor(
     horizon: int,

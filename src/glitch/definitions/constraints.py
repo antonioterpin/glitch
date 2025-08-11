@@ -3,10 +3,13 @@
 import jax.numpy as jnp
 from typing import Tuple
 
-from hcnn.project import Project
-from hcnn.constraints.box import BoxConstraint
-from hcnn.constraints.affine_inequality import AffineInequalityConstraint
-from hcnn.constraints.affine_equality import EqualityConstraint
+from pinet import (
+    Project,
+    BoxConstraint,
+    AffineInequalityConstraint,
+    EqualityConstraint,
+    BoxConstraintSpecification,
+)
 
 from glitch.definitions.dynamics import (
     get_position_mask,
@@ -214,10 +217,10 @@ def get_constraints(
     # (needs enabling for variable box constraints)
 
     # TODO: check if using mask can improve efficiency
-    box = BoxConstraint(
-        lower_bound=lb[None, ...],
-        upper_bound=ub[None, ...],
-    )
+    box = BoxConstraint(BoxConstraintSpecification(
+        lb=lb[None, ...],
+        ub=ub[None, ...],
+    ))
 
     # ---- Affine inequality constraints ----
     ineq = None
@@ -272,6 +275,7 @@ def get_constraints(
         A = A_eq[None, ...],
         b = jnp.zeros((1, A_eq.shape[0], 1)), # b is considered variable anyway
         method=None,
+        var_A=False, # A is constant for the whole problem
         var_b=True # We may need to solve for different initial and terminal states
     )
 

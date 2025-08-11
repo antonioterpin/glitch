@@ -4,14 +4,18 @@ import pickle
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
-from hcnn.project import Project
+from pinet import (
+    Project,
+    ProjectionInstance,
+    EqualityConstraintsSpecification,
+)
 
 from glitch.utils import logger
 from glitch.definitions.dynamics import FleetStateInput
 from glitch.definitions.dynamics import get_dynamics
 
-class HardConstrainedMLP(nn.Module):
-    """Simple MLP with hard constraints on the output."""
+class HardConstrainedNN(nn.Module):
+    """Simple NN with hard constraints on the output."""
     project: Project
     features_list: list
     unroll: bool # True if unrolling is used in the projection layer
@@ -24,28 +28,57 @@ class HardConstrainedMLP(nn.Module):
         self, 
         initial_states_batched, 
         final_states_batched, 
+        context_batched,
         sigma, 
         omega, 
         n_iter=100, 
         n_iter_bwd=100, 
-        raw=False
+        raw=False,
+        A=None,
+        B=None,
     ):
         """Call the NN."""
         x0 = jax.vmap(lambda x: x.flatten())(initial_states_batched)
         # x = (jax.vmap(lambda x: x.flatten())(final_states_batched) - x0).squeeze(-1)
         x = vmap_flatten(initial_states_batched, final_states_batched).squeeze(-1)
+
+        if context_batched is not None:
+            c = context_batched # (B, res, res, 1)
+            # Strided conv tower
+            downsample = 2
+            if c.shape[1] >= 512:
+                downsample = 4
+            for features in (16, 16, 16):
+                c = nn.Conv(
+                    features=features,
+                    kernel_size=(3, 3),
+                    strides=(downsample, downsample),
+                    padding="SAME",
+                    use_bias=False,
+                )(c)
+                c = self.activation(c)
+
+            # Flatten the context
+            c = c.reshape(c.shape[0], -1) # (B, res' * res' * features)
+            c = nn.Dense(4)(c)
+            c = nn.softmax(c)
+
+            # Fuse with the other features
+            x = jnp.concatenate([x, c], axis=-1)
+
         for features in self.features_list:
             x = nn.Dense(features)(x)
             x = self.activation(x)
         # The output of the MLP are the inputs
         n_inputs = self.fsu.n_states * self.fsu.n_robots * self.fsu.horizon
         u = nn.Dense(n_inputs)(x)[..., None]
-        A, B = get_dynamics(
-            horizon=self.fsu.horizon,
-            n_robots=self.fsu.n_robots,
-            n_states=self.fsu.n_states,
-            h=0.5,
-        )
+        if A is None or B is None:
+            A, B = get_dynamics(
+                horizon=self.fsu.horizon,
+                n_robots=self.fsu.n_robots,
+                n_states=self.fsu.n_states,
+                h=0.5,
+            )
         x_all = jax.vmap(lambda _x, _u: A @ _x + B @ _u)(x0, u)
         p_dim = self.fsu.n_states * self.fsu.n_robots * self.fsu.horizon
         p_all = x_all[:, :p_dim, :]
@@ -70,28 +103,24 @@ class HardConstrainedMLP(nn.Module):
             
             # next, we prepare the x for the projection layer
             x = predictions_to_projection_layer_format(x)
-            init = self.project.get_init(x)
+            yraw=ProjectionInstance(
+                x=x[..., None], eq=EqualityConstraintsSpecification(b=b)
+            )
             if self.unroll:
                 x = self.project.call(
-                    init, 
-                    x, 
-                    b, 
-                    interpolation_value=0.0, 
+                    yraw=yraw,
                     sigma=sigma,
                     omega=omega,
-                    n_iter=n_iter)[0]
+                    n_iter=n_iter)[0].x[..., 0]
             else:
                 x = self.project.call(
-                    init,
-                    x,
-                    b,
-                    interpolation_value=0.0,
+                    yraw=yraw,
                     sigma=sigma, 
                     omega=omega,
                     n_iter=n_iter,
                     n_iter_bwd=n_iter_bwd,
                     fpi=self.fpi,
-                )[0]
+                )[0].x[..., 0]
             
             # we need to undo the rebatching
             x = projection_layer_format_to_predictions(

@@ -1,0 +1,17 @@
+name: hcnn
+unroll: False
+fpi: False
+autotuning: False
+equilibration: False
+n_iter_train: 250
+n_iter_test: 500
+n_iter_bwd: 100
+sigma: 0.001
+omega: 1.7
+learning_rate: 0.001
+features: [64, 64]
+activation: relu
+seed: 0
+collision_penalty_fn: collision_penalty_bump
+collision_penalty: 1
+collision_normalization_factor: 10.0

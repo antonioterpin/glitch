@@ -13,10 +13,16 @@ import optax
 from flax.training import train_state
 import matplotlib.pyplot as plt
 
+from pinet import (
+    ProjectionInstance,
+    EqualityConstraintsSpecification,
+)
+
 from glitch.plotting import plot_trajectory
 from glitch.definitions.constraints import get_constraints
+from glitch.definitions.dynamics import get_dynamics
 from glitch.nn import (
-    HardConstrainedMLP, 
+    HardConstrainedNN, 
     load_model, 
     save_model, 
     predictions_to_projection_layer_format,
@@ -30,22 +36,24 @@ from glitch.utils import logger
 
 jax.config.update("jax_enable_x64", True)
 
-def build_batched_objective(config_hcnn, config_problem):
-    collision_penalty_fn_name = config_hcnn["collision_penalty_fn"]
+def build_batched_objective(config_problem):
     h = config_problem["h"]
-    try:
-        collision_penalty_fn = getattr(preferences, collision_penalty_fn_name)
-    except AttributeError:
-        raise ValueError(f"Unknown collision penalty '{collision_penalty_fn_name}'")
     compensation = jnp.array(config_problem["gravity"])
     input_effort = config_problem["input_effort"]
     fleet_preference = config_problem["fleet_preference"]
     agent_preference = config_problem["agent_preference"]
-    def batched_objective(predictions, initial_states, final_states):
+    contextual_coverage = config_problem.get("contextual_coverage", False)
+        
+    def batched_objective(predictions, initial_states, final_states, context=None):
+        if contextual_coverage:
+            val = preferences.reward_2d_single_agent_with_context(predictions, context)
+        else:
+            val = preferences.reward_2d_single_agent(predictions)
+
         return (
             input_effort * preferences.input_effort(predictions, compensation, h) 
             +
-            agent_preference * preferences.reward_2d_single_agent(predictions)
+            agent_preference * val
             +
             fleet_preference * preferences.coverage(
                 predictions,
@@ -59,7 +67,7 @@ def build_batched_objective(config_hcnn, config_problem):
 
 def build_steps(project, config_hcnn, config_problem):
     """Build the training and evaluation step functions."""
-    batched_objective = build_batched_objective(config_hcnn, config_problem)
+    batched_objective = build_batched_objective(config_problem)
     sigma, omega, n_iter_train, n_iter_test, n_iter_bwd = (
         config_hcnn["sigma"],
         config_hcnn["omega"],
@@ -68,7 +76,14 @@ def build_steps(project, config_hcnn, config_problem):
         config_hcnn["n_iter_bwd"],
     )
 
-    def train_step(state, initial_states, final_states):
+    A, B = get_dynamics(
+        horizon=config_problem["horizon"],
+        n_robots=config_problem["n_robots"],
+        n_states=config_problem["n_states"],
+        h=config_problem["h"],
+    )
+
+    def train_step(state, initial_states, final_states, context=None):
         """Run a single training step."""
 
         def loss_fn(params):
@@ -76,12 +91,16 @@ def build_steps(project, config_hcnn, config_problem):
                 {"params": params}, 
                 initial_states_batched=initial_states,
                 final_states_batched=final_states,
+                context_batched=context,
                 sigma=sigma,
                 omega=omega,
                 n_iter=n_iter_train, 
                 n_iter_bwd=n_iter_bwd,
+                A=A,
+                B=B,
             )
-            return batched_objective(predictions, initial_states, final_states).mean()
+            return batched_objective(
+                predictions, initial_states, final_states, context).mean()
 
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
 
@@ -93,26 +112,32 @@ def build_steps(project, config_hcnn, config_problem):
 
         return loss, state.apply_gradients(grads=grads), grad_norm
 
-    def eval_step(state, initial_states, final_states):
+    def eval_step(state, initial_states, final_states, context=None):
         predictions = state.apply_fn(
             {"params": state.params}, 
             initial_states_batched=initial_states, 
             final_states_batched=final_states,
+            context_batched=context,
             sigma=sigma,
             omega=omega,
             n_iter=n_iter_test, 
             n_iter_bwd=n_iter_bwd,
+            A=A,
+            B=B,
         )
 
-        accuracy = batched_objective(predictions, initial_states, final_states).mean()
+        accuracy = batched_objective(
+            predictions, initial_states, final_states, context).mean()
         # During training, we report the average constraint violation
         x = predictions_to_projection_layer_format(predictions)
         n_eq = project.eq_constraint.n_constraints
         b = prepare_b_from_batch(n_eq, initial_states, final_states)
-        project.eq_constraint.b = b
-        cv = project.cv(x).mean()
+        cv = project.cv(ProjectionInstance(
+            x=x[..., None], eq=EqualityConstraintsSpecification(b=b)
+        )).mean()
 
         return accuracy, cv, predictions
+    
     # return train_step, eval_step
     return jax.jit(train_step), jax.jit(eval_step)
 
@@ -145,7 +170,7 @@ def load_hcnn(project, config_hcnn, config_problem):
     ))
     fsu = preferences.FleetStateInput(p=p, v=v, u=u)
 
-    return HardConstrainedMLP(
+    return HardConstrainedNN(
         project=project,
         fsu=fsu,
         features_list=config_hcnn["features"],
@@ -225,26 +250,28 @@ def train_hcnn(
     eval_every: int,
     output_dir: str,
     run_name: str,
+    config: dict = {},
 ):
     """Train the HCNN model."""
-    eval_initial_states, eval_final_states = dataset_validation[0]
+    eval_initial_states, eval_final_states, eval_context = dataset_validation[0]
     validation_loss = None
     validation_cv = None
     get_next = jax.jit(lambda step: dataset_training[step])
     n_steps = 0
     with (
         GracefulShutdown("Stop detected, finishing epoch...") as g,
-        Logger(run_name) as data_logger,
+        Logger(run_name, config) as data_logger,
     ):
         for step in (pbar := tqdm(range(len(dataset_training)))):
             if g.stop:
                 break
-            initial_states, final_states = get_next(step)
+            initial_states, final_states, train_context = get_next(step)
             t = time.time()
             loss, state, grad_norm = train_step(
                 state, 
                 initial_states,
                 final_states,
+                train_context
             )
             t = time.time() - t
             data_logger.log(step, {
@@ -257,7 +284,8 @@ def train_hcnn(
                 validation_loss, validation_cv, _ = eval_step(
                     state, 
                     eval_initial_states, 
-                    eval_final_states
+                    eval_final_states,
+                    eval_context
                 )
                 data_logger.log(step, {
                     "validation_objective": validation_loss,
@@ -300,6 +328,12 @@ if __name__ == "__main__":
     if config_hcnn is None:
         raise ValueError(f"Configuration file not found or empty: {args.config_hcnn}.")
     
+    # config for dumping logs to wandb
+    config = {
+        "dataset": config_dataset,
+        "hcnn": config_hcnn,
+    }
+
     # Prepare the constraints
     project = get_constraints(
         horizon=config_dataset["problem"]["horizon"],
@@ -322,11 +356,12 @@ if __name__ == "__main__":
     else:
         print("No parameters loaded. Initializing the network parameters from scratch.")
         # Initialize the parameters
-        initial_states, final_states = dataset_training[0]
+        initial_states, final_states, train_context = dataset_training[0]
         trainable_state = hcnn.init(
             jax.random.PRNGKey(config_hcnn["seed"]),
             initial_states_batched=initial_states, 
             final_states_batched=final_states,
+            context_batched=train_context,
             sigma=config_hcnn["sigma"],
             omega=config_hcnn["omega"],
             n_iter=2,
@@ -369,19 +404,21 @@ if __name__ == "__main__":
             eval_every=args.eval_every,
             output_dir=output_dir,
             run_name=run_name,
+            config=config
         )
         training_time = time.time() - training_time_start
         print(f"Training time: {training_time:.5f} seconds")
 
     # Evaluate the (trained) model on the test set
-    eval_initial_states, eval_final_states = dataset_test[0]
+    eval_initial_states, eval_final_states, eval_context = dataset_test[0]
     with (
-        Logger(run_name) as data_logger,
+        Logger(run_name, config) as data_logger,
     ):
         obj, cv, predictions = eval_step(
             state, 
             eval_initial_states, 
-            eval_final_states
+            eval_final_states,
+            eval_context
         )
         data_logger.log(0, {
             "evaluation_objective": obj,
@@ -406,8 +443,10 @@ if __name__ == "__main__":
                     ),
                     initial_positions=np.asarray(eval_initial_states.p[idx, 0, :, :2]),
                     final_positions=np.asarray(eval_final_states.p[idx, 0, :, :2]),
+                    context=np.asarray(eval_context[idx]) if eval_context is not None else None,
                     title=f"Evaluation trajectory {idx}",
                 )
+                
                 # fictitiously save the figure for different steps so that wandb
                 # renders a slider
                 data_logger.log_figure(
@@ -416,3 +455,8 @@ if __name__ == "__main__":
                     t=step + idx,
                 )
                 plt.close(fig)
+
+                # Save the trajectory to file as csv
+                trajectory_file = f"{output_dir}/{idx}.csv"
+                np.savetxt(trajectory_file, predictions.p[idx, :, :, :2].reshape(-1, 2), delimiter=",")
+                logger.info(f"Saved trajectory to {trajectory_file}")
