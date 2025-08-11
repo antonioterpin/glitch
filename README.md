@@ -10,7 +10,7 @@ We use &Pi;net to synthesize transition trajectories between multi-vehicle confi
 
 ## Using &Pi;net is easy
 
-Let $p_i[t] \in \reals^m$ be the generalized coordinates of vehicle $i$ at the discrete times $t \in \{1, \ldots, T\}$, 
+Let $p_i[t] \in \mathbb{R}^m$ be the generalized coordinates of vehicle $i$ at the discrete times $t \in \{1, \ldots, T\}$, 
 and $v_i[t]$ and $a_i[t]$ its generalized velocity and acceleration. 
 Its simple discretized dynamics read $v_i[t + 1] = v_i[t] + h a_i[t]$, $p_i[t + 1] = p_i[t] + h v_i[t] + \frac{h^2}{2}a_i[t]$.
 
