@@ -134,8 +134,8 @@ def _bilinear_interpolate(grid_vals, xs, ys, x_coords, y_coords):
 def reward_2d_single_agent_with_context(
     fsu: FleetStateInput,
     context: jax.Array,
-    x_coords: jnp.ndarray = jnp.linspace(-5, 5, 64), # 1024,
-    y_coords: jnp.ndarray = jnp.linspace(-5, 5, 64), # 1024
+    x_coords: jnp.ndarray = jnp.linspace(-5, 5, 64),
+    y_coords: jnp.ndarray = jnp.linspace(-5, 5, 64),
     ):
     """Compute the reward of a fleet state based on a 2D landscape with context.
 

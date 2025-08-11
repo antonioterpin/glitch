@@ -1,155 +1,211 @@
-# glitch
-Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But this repo contains code for conditional generation of transitions for swarm of robots.
+# Multi-vehicle trajectory planning with &Pi;net 
+GLITCH stands for Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But this repo contains code for conditional generation of transitions for swarm of robots, showcasing an application of &Pi;net.
 
-## Installation
-We will use [conda](https://conda.io/en/latest/user-guide/install/) to handle the virtual environment.
-```bash
-conda create -n glitch python=3.12
-conda activate glitch
-pip install pip --upgrade
-```
-Dev with CUDA12:
-```bash
-pip install .[cuda12,dev]
-```
-Dev without CUDA12:
-```bash
-pip install .[dev]
-```
-For docs:
-```bash
-pip install .[cuda12,dev,docs]
-```
+[![arXiv](https://img.shields.io/badge/arXiv-TODO-b31b1b?style=flat&logo=arxiv&logoColor=white)](https://arxiv.org/abs/TODO)
+![View Repo](https://img.shields.io/badge/GitHub-antonioterpin%2Fpinet-blue?logo=github)
 
-## Compiling the documentation with Sphinx
-To compile the documentation using Sphinx, navigate to the root directory of your project and run the following command to build the HTML documentation:
-```bash
-sphinx-build -b html ./docs ./docs/build/
-```
-This command tells Sphinx to generate HTML files from the source files located in the ./docs directory and place the generated files in the ./docs/build/ directory.
+We use &Pi;net to synthesize in milliseconds transition trajectories between multi-vehicle configurations that optimize some non-linear, *fleet-level* objective subject to dynamics, state and input constraints. We feed a neural network with the initial and terminal fleet configurations (the context $\mathrm{x}$), obtain the raw input trajectories and use the vehicle dynamics to infer the full state-input trajectories that serves as the raw output $y_{\text{raw}}$, which are then projected for ensured constraint satisfaction.
 
-The compiled HTML pages will be located in the docs/build directory. You can open the index.html file in your web browser to view the documentation.
+![Glitch system](./media/system-glitch.jpg)
 
-## Contributing
-The `Coding style validation` action will fail if the pre-commit checks do not pass. To make sure that these are checked automatically on push, run:
-```sh
-pre-commit install --hook-type pre-push --install-hooks
-```
-To run the pre-commit checks on specific files:
-```bash
-pre-commit run --files <files>
-```
-To run on all files:
-```bash
-pre-commit run --all-files
-```
-If for some reason you really want to ignore them during commit/push, add `--no-verify`.
+## Using &Pi;net is easy
 
-To ease writing commit messages that conform to the [standard](https://www.conventionalcommits.org/en/v1.0.0/#summary), you can configure the template with:
-```bash
-git config commit.template .gitmessage
-```
-To fill in the template, run
-```bash
-git commit
-```
-When you have edited the commit, press `Esc` and then type `:wq` to save. In `Visual Studio Code`, you should setup the editor with
-```bash
-git config core.editor "code --wait"
-```
-You may need to [setup the `code` command](https://code.visualstudio.com/docs/setup/mac).
-The `Commit style validation` action will fail if you do not adhere to the recommended style.
+Let $p_i[t] \in \reals^m$ be the generalized coordinates of vehicle $i$ at the discrete times $t \in \{1, \ldots, T\}$, 
+and $v_i[t]$ and $a_i[t]$ its generalized velocity and acceleration. 
+Its simple discretized dynamics read $v_i[t + 1] = v_i[t] + h a_i[t]$, $p_i[t + 1] = p_i[t] + h v_i[t] + \frac{h^2}{2}a_i[t]$.
 
-Tip: When something fails, fix the issue and use:
-```bash
-git commit --amend
-git push --force
+We formulate the motion planning task for the fleet as a parametric program,
+$$     \underset{ y }{\mathrm{minimize}}
+    \quad \varphi(y, \mathrm{x})
+    \quad
+\mathrm{subject~to} \quad
+y \in \mathcal{C}(\mathrm{x}), $$
+where $\mathcal{C}(\mathrm{x})$ includes box constraints on positions (workspace constraints), velocities, and accelerations (physical limits), 
+affine inequality constraints for jerk limits, and equality constraints for the dynamics and initial/final configuration *for each vehicle*. 
+The objective function $\varphi$ encapsulates a *fleet-level* objective, see [results](#results) for different objective functions we considered.
+
+We specify the constraints in [constraints.py](./src/glitch/definitions/constraints.py). For instance, the jerk constraints are affine inequality constraints:
+
+```python
+C = get_jerk_matrix(
+    horizon=horizon,
+    n_states=n_states, 
+    n_robots=n_robots, 
+    h=h
+)
+lb = config.get("lower_bound", -1) * jnp.ones((C.shape[0], 1))
+ub = config.get("upper_bound", 1) * jnp.ones((C.shape[0], 1))
+
+ineq = AffineInequalityConstraint(
+  C=C[None, ...],     # We construct each of these matrix/vectors unbatched,
+                      # whereas pinet works batching.
+  lb=lb[None, ...],
+  ub=ub[None, ...],
+)
 ```
 
-### Development workflow
-We follow a [Git feature branch](https://www.atlassian.com/git/tutorials/comparing-workflows/feature-branch-workflow) workflow with test-driven-development. In particular:
+Working space constraints, velocity and acceleration constraints are box constraints:
+```python
+box = BoxConstraint(BoxConstraintSpecification(
+  lb=lb[None, ...],   # lb and ub are the bounds obtaining by 
+                      # taking the minimum/maximum
+                      # of the various constraints
+  ub=ub[None, ...],
+))
+```
 
-- The basic workflow is as follows:
-  1. Open an issue for the feature to implement, and describe in detail the goal of the feature. Describe the tests that should pass for the feature to be considered implemented.
-  2. Open a branch from `dev` for the feature:
-    ```bash
-    git checkout dev
-    git checkout -b feature-<issue-number>
-    ```
-  3. Add the tests; see [Testing](#testing-a-feature).
-  4. Implement the feature and make sure the tests pass.
-  5. Open a PR to the `dev` branch. Note that the PR requires to `squash` the commit. See [Preparing for a PR](#preparing-for-a-pr).
-  6. Close the branch.
+The dynamics constraints and the initial and final position constraints can be specified via affine equality constraints:
+```python
+A_initial_states = get_initial_states_extractor(
+    horizon=horizon,
+    n_states=n_states,
+    n_robots=1, # We can decouple the constraints among the robots
+)
+A_final_states = get_final_states_extractor(
+    horizon=horizon,
+    n_states=n_states,
+    n_robots=1, # We can decouple the constraints among the robots
+)
+A_inputs = get_input_extractor(
+    horizon=horizon,
+    n_states=n_states,
+    n_robots=1, # We can decouple the constraints among the robots
+)
+A, B = get_dynamics(
+    horizon=horizon,
+    n_states=n_states,
+    n_robots=1, # We can decouple the constraints among the robots
+    h=h,
+)
+A_dynamics_outputs = get_dynamics_outputs_extractor(
+    horizon=horizon,
+    n_states=n_states,
+    n_robots=1, # We can decouple the constraints among the robots
+)
+A_eq = jnp.concatenate((
+    A_initial_states,
+    A_final_states,
+    A @ A_initial_states + B @ A_inputs - A_dynamics_outputs,
+), axis=0)
+eq = EqualityConstraint(
+    A = A_eq[None, ...],
+    b = jnp.zeros((1, A_eq.shape[0], 1)), # b is considered variable anyway
+    method=None,  # We tell pinet to not pre-compute linear systems solutions.
+                  # Since we have inequality constraints, 
+                  # we will need to lift the constraints and pre-computation
+                  # would be wasted.
+    var_A=False,  # A is constant for the whole problem
+    var_b=True    # We may need to solve for different initial and terminal states
+)
+```
 
-- `main` and `dev` branches are protected from push, and require a PR.
-- We run github actions to check the test status on push on any branch. The rationale is that we want to know the state of each feature without polling the developer.
-- We open a PR to `main` only for milestones.
+We then instantiate the projection method:
+```python
+project = Project(
+  box_constraint=box,
+  ineq_constraint=ineq,
+  eq_constraint=eq,
+  unroll=config_hcnn["unroll"],
+)
+```
+&Pi;net, internally, will lift the constraints and put them in an efficient form. To introduce pinet in the neural network, see [nn.py](./src/glitch/nn.py). Briefly, we make sure that after our backbone network (either a CNN or a simple MLP) we have a layer outputting `n_inputs` values,
+```python
+u = nn.Dense(n)(x)[..., None]
+```
+where `n` is `n_states * n_robots * horizon`.
 
-### Testing a feature
-We will use [pytest](https://docs.pytest.org/en/stable/) to thoroughly test all our code. To run all tests:
-```bash
-pytest -v
+Then, we can compute the state evolution as
+```python
+x_all = jax.vmap(lambda _x, _u: A @ _x + B @ _u)(x0, u)
+p_all = x_all[:, :n, :]
+v_all = x_all[:, n:, :]
 ```
-Before pushing a feature, implement also the related test. The goal is to make sure that if something does not behave as expected (possibly as a result of another change) the tests capture it.
+After preparing the variable `b` for the affine equality constraints and reformatting the state `x` in the same format as specified in the constraints
+```python
+b = prepare_b_from_batch(n_eq, initial_states_batched, final_states_batched)
+x = predictions_to_projection_layer_format(x_all)
+```
+we project the prediction onto the constraints:
+```python
+yraw=ProjectionInstance(
+  x=x[..., None], eq=EqualityConstraintsSpecification(b=b)
+)
+x = self.project.call(
+  yraw=yraw,
+  sigma=sigma, 
+  omega=omega,
+  n_iter=n_iter,
+  n_iter_bwd=n_iter_bwd
+)[0].x[..., 0]
+```
 
+## Results
 
-### Preparing for a PR
-Before opening a PR to `dev`, you need to `squash` your commits into a single one. First, review your commit history to identify how many commits need to be squashed:
-```bash
-git log --oneline
-```
-For example, you may get
-```bash
-abc123 Feature added A
-def456 Fix for bug in feature A
-ghi789 Update documentation for feature A
-```
-Suppose you want to squash the three above into a single commit, `Implement feature <issue-number>`. You can rebase interactively to squash the commits:
-```bash
-git rebase -i HEAD~<number-of-commits>
-```
-For example, if you want to squash the last 3 commits:
-```bash
-git rebase -i HEAD~3
-```
-An editor will open, showing a list of commits:
-```bash
-pick abc123 Feature added A
-pick def456 Fix for bug in feature A
-pick ghi789 Update documentation for feature A
-```
-- Keep the first commit as `pick`.
-- Change `pick` to `squash` (or `s`) for the subsequent commits:
-```bash
-pick abc123 Feature added A
-squash def456 Fix for bug in feature A
-squash ghi789 Update documentation for feature A
-```
-Save and close the editor.
-Git will prompt you to edit the combined commit message. You’ll see:
-```bash
-# This is a combination of 3 commits.
-# The first commit's message is:
-Feature added A
+Here, we explain how to reproduce the results in the [paper](https://arxiv.org/abs/TODO).
 
-# The following commit messages will also be included:
-Fix for bug in feature A
-Update documentation for feature A
+> [!TIP] With Docker 🐳
+> Below we provide the commands without the docker container, but to run it within a Docker container you can use
+> ```bash
+> docker compose run --rm glitch-cpu the-command # run on CPU
+> docker compose run --rm glitch-gpu the-command # run on GPU
+> ```
+> instead of 
+> ```bash
+> python the-command
+> ```
+
+### Workspace coverage, input effort and trajectory preference from a potential function
+The objective is to minimize
+\[
+\varphi(y) = \texttt{effort}(y) + \lambda \cdot \texttt{preference}(y) + \nu\cdot \texttt{coverage}(y)
+\]
+where $\texttt{effort}(y)$ describes the input effort of the solution $y$, 
+$\texttt{preference}(y)$ describes the fitness of $y$ with respect to a spatial potential $\psi$, 
+and $\texttt{coverage}(y)$ describes the fraction of the workspace that the agents cover over time, 
+and $\lambda, \nu \geq 0$ are tuning parameters. For details, please refer to the code or paper. You can tune these parameters in [dataset.yaml](./configs/dataset.yaml):
+```yaml
+input_effort: 0.0 # 1.0
+fleet_preference: -1.0 # -1.0
+agent_preference: 0.0 # 0.05
 ```
-Edit it into a single meaningful message, like:
+
+To run this example, you can use 
 ```bash
-Add feature A with bug fixes and documentation updates
+python -m src.main --train --config-hcnn configs/hcnn.yaml --config-dataset configs/dataset.yaml
 ```
-Save and close the editor; Git will squash the commits. If there are conflicts during the rebase, resolve them and continue:
+You can plot different trajectories by specifying the `--plot-trajectories 1 2 n3 n4 ...` argument. Below, from left to right, we show the results with only `input_effort`, with `input_effort` and `fleet_preference`, and with all of the three terms non-zero.
+
+![5 robots, sample 1](./media/5-1.jpg)
+![5 robots, sample 1](./media/5-2.jpg)
+![5 robots, sample 1](./media/5-3.jpg)
+![5 robots, sample 1](./media/5-4.jpg)
+![5 robots, sample 1](./media/5-5.jpg)
+
+You can also plan with more vehicles by increasing the `n_robots` value in `dataset.yaml`:
+```yaml
+n_robots: 25 # before: 5
+```
+![25 robots, sample 1](./media/25-1.jpg)
+![25 robots, sample 1](./media/25-2.jpg)
+![25 robots, sample 1](./media/25-3.jpg)
+![25 robots, sample 1](./media/25-4.jpg)
+![25 robots, sample 1](./media/25-5.jpg)
+
+### Contextual coverage and longer horizon
+![Contextual coverage](./media/contextual-coverage.jpg)
+In the next example, we explore how &Pi;net handles:
+- very high-dimensional context size (in the millions of variables); and
+- a large number of optimization variables and constraints (in the tens of thousands).
+
+For this, we focus on a single vehicle with the same constraints as before, increase the horizon length, and consider as cost function the average along the trajectory of the value assigned (via bilinear interpolation) to the position of the vehicle by a discrete map $\mathrm{m}$ of resolution $\texttt{res}\times\texttt{res}$. Thus, the context $\mathrm{x}$ corresponds to the initial and final location as well as the map $\mathrm{m}$. For details, please refer to the code or paper.
+
+We consider two cases:
+- $H = 100$, $\texttt{res} = 1024$, $D = 4$. In this case, we evaluate if &Pi;net enables training end-to-end of neural networks with constraints even when the context is very high-dimensional (for a comparison, DC3 considers a context of dimension $50$).
 ```bash
-git rebase --continue
+python -m src.main --train --config-hcnn configs/hcnn_context.yaml --config-dataset configs/dataset_large_context.yaml
 ```
-Verify the commit history:
+- $H = 750$, $\texttt{res} = 64$, $D = 2$. In this case, we evaluate &Pi;net for a context of size similar to that typical of, e.g., reinforcement learning settings and a number of optimization variables and constraints two orders of magnitude larger than state-of-the-art parametric optimization algorithms (for instance, DC3 considers $100$ optimization variables, and $50$ equality and inequality constraints).
 ```bash
-git log --oneline
+python -m src.main --train --config-hcnn configs/hcnn_context.yaml --config-dataset configs/dataset_long_horizon.yaml
 ```
-You should see one clean commit instead of multiple. If you’ve already pushed the branch to a remote repository, you need to force-push after squashing:
-```bash
-git push --force
-```
-Now that the feature branch has a clean history, create the PR from your feature branch to the main branch. The reviewers will see a single, concise commit summarizing your changes. See the [guidelines for commit messages](https://www.conventionalcommits.org/en/v1.0.0/#summary).
+As before, you can use the option `--plot-trajectory` to save some trajectories at the end of the episode.

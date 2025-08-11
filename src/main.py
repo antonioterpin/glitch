@@ -42,11 +42,16 @@ def build_batched_objective(config_problem):
     input_effort = config_problem["input_effort"]
     fleet_preference = config_problem["fleet_preference"]
     agent_preference = config_problem["agent_preference"]
-    contextual_coverage = config_problem.get("contextual_coverage", False)
+    contextual_coverage = config_problem.get("contextual_coverage", 0)
         
     def batched_objective(predictions, initial_states, final_states, context=None):
-        if contextual_coverage:
-            val = preferences.reward_2d_single_agent_with_context(predictions, context)
+        if contextual_coverage > 0:
+            val = preferences.reward_2d_single_agent_with_context(
+                predictions, 
+                context,
+                x_coords=jnp.linspace(-5, 5, contextual_coverage),
+                y_coords=jnp.linspace(-5, 5, contextual_coverage),
+            )
         else:
             val = preferences.reward_2d_single_agent(predictions)
 
@@ -225,7 +230,7 @@ def argument_parser():
     parser.add_argument(
         "--eval-every",
         type=int,
-        default=1000,
+        default=100,
         help="Evaluate the model every eval_every training batches.",
     )
 

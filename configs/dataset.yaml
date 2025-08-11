@@ -4,6 +4,7 @@ problem:
   input_effort: 0.0 # 1.0
   fleet_preference: -1.0 # -1.0
   agent_preference: 0.0 # 0.05
+  contextual_coverage: 0 # no contextual coverage 
   n_robots: 5
   n_states: 2 # NOTE: at the moment, only 2D is supported
   horizon: 25 # plan over horizon * h seconds

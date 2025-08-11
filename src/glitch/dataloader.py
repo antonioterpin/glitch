@@ -14,7 +14,7 @@ class TransitionsDataset():
             horizon: int,
             batch_size: int,
             keys: Optional[List[int]] = None,
-            contextual_coverage: bool = False,
+            contextual_coverage: int = 0,
             offset: int = 0):
         """Initialize the dataset.
 
@@ -26,7 +26,9 @@ class TransitionsDataset():
             horizon (int): Horizon length.
             keys (list, optional): List of keys for the dataset. Defaults to None.
                 If None, the dataset will be unbounded.
-            offset (int): Offset for the dataset. Defaults to 0.
+            contextual_coverage (int): 
+                Dimension of the contextual coverage. 0 if no contextual coverage.
+            offset (int): Offset for the dataset.
         """
         super().__init__()
 
@@ -92,12 +94,11 @@ class TransitionsDataset():
         self.sample_initial_states = jax.vmap(sample_initial_states)
         self.sample_final_states = jax.vmap(sample_final_states)
 
-        if self.contextual_coverage:
-            self.resolution = 64 # 1024
+        if self.contextual_coverage > 0:
             # meshgrid for the 2D landscape
             X, Y = jnp.meshgrid(
-                jnp.linspace(-5, 5, self.resolution), 
-                jnp.linspace(-5, 5, self.resolution)
+                jnp.linspace(-5, 5, self.contextual_coverage), 
+                jnp.linspace(-5, 5, self.contextual_coverage)
             )
             # save X, Y as points (N, 2)
             self.points = jnp.stack((X.flatten(), Y.flatten()), axis=-1)

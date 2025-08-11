@@ -12,6 +12,3 @@ learning_rate: 0.001
 features: [64, 64]
 activation: relu
 seed: 0
-collision_penalty_fn: collision_penalty_bump
-collision_penalty: 1
-collision_normalization_factor: 10.0
