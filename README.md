@@ -4,7 +4,7 @@ GLITCH stands for Generative Light-Transition Choreography Hub (tbh, it's a made
 [![arXiv](https://img.shields.io/badge/arXiv-TODO-b31b1b?style=flat&logo=arxiv&logoColor=white)](https://arxiv.org/abs/TODO)
 ![View Repo](https://img.shields.io/badge/GitHub-antonioterpin%2Fpinet-blue?logo=github)
 
-We use &Pi;net to synthesize in milliseconds transition trajectories between multi-vehicle configurations that optimize some non-linear, *fleet-level* objective subject to dynamics, state and input constraints. We feed a neural network with the initial and terminal fleet configurations (the context $\mathrm{x}$), obtain the raw input trajectories and use the vehicle dynamics to infer the full state-input trajectories that serves as the raw output $y_{\text{raw}}$, which are then projected for ensured constraint satisfaction.
+We use &Pi;net to synthesize transition trajectories between multi-vehicle configurations that optimize some non-linear, *fleet-level* objective subject to dynamics, state and input constraints. We feed a neural network with the initial and terminal fleet configurations (the context $\mathrm{x}$), obtain the raw input trajectories and use the vehicle dynamics to infer the full state-input trajectories that serves as the raw output $y_{\text{raw}}$, which are then projected for ensured constraint satisfaction.
 
 ![Glitch system](./media/system-glitch.jpg)
 
@@ -173,6 +173,12 @@ To run this example, you can use
 ```bash
 python -m src.main --train --config-hcnn configs/hcnn.yaml --config-dataset configs/dataset.yaml
 ```
+
+> [!NOTE] Stopping the training
+> The training will continue indefinetely, so let it run for a while and then just press ctrl-c to stop.
+
+For more configurations, check the `.yaml` files and/or run `python -m src.main --help`.
+
 You can plot different trajectories by specifying the `--plot-trajectories 1 2 n3 n4 ...` argument. Below, from left to right, we show the results with only `input_effort`, with `input_effort` and `fleet_preference`, and with all of the three terms non-zero.
 
 ![5 robots, sample 1](./media/5-1.jpg)
@@ -180,6 +186,7 @@ You can plot different trajectories by specifying the `--plot-trajectories 1 2 n
 ![5 robots, sample 1](./media/5-3.jpg)
 ![5 robots, sample 1](./media/5-4.jpg)
 ![5 robots, sample 1](./media/5-5.jpg)
+
 
 You can also plan with more vehicles by increasing the `n_robots` value in `dataset.yaml`:
 ```yaml
