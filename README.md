@@ -1,7 +1,7 @@
 # Multi-vehicle trajectory planning with &Pi;net 
 GLITCH stands for Generative Light-Transition Choreography Hub (tbh, it's a made up acronym). But this repo contains code for conditional generation of transitions for swarm of robots, showcasing an application of &Pi;net.
 
-[![arXiv](https://img.shields.io/badge/arXiv-TODO-b31b1b?style=flat&logo=arxiv&logoColor=white)](https://arxiv.org/abs/TODO)
+[![arXiv](https://img.shields.io/badge/arXiv-2508.10480-b31b1b?style=flat&logo=arxiv&logoColor=white)](https://www.arxiv.org/abs/2508.10480)
 [![View Repo](https://img.shields.io/badge/GitHub-antonioterpin%2Fpinet-blue?logo=github)](https://github.com/antonioterpin/pinet)
 
 We use &Pi;net to synthesize transition trajectories between multi-vehicle configurations that optimize some non-linear, *fleet-level* objective subject to dynamics, state and input constraints. We feed a neural network with the initial and terminal fleet configurations (the context $\mathrm{x}$), obtain the raw input trajectories and use the vehicle dynamics to infer the full state-input trajectories that serves as the raw output $y_{\text{raw}}$, which are then projected for ensured constraint satisfaction.
@@ -141,7 +141,7 @@ x = self.project.call(
 
 ## Results
 
-Here, we explain how to reproduce the results in the [paper](https://arxiv.org/abs/TODO).
+Here, we explain how to reproduce the results in the [paper](https://arxiv.org/abs/2508.10480).
 
 > [!TIP] With Docker 🐳
 > Below we provide the commands without the docker container, but to run it within a Docker container you can use
